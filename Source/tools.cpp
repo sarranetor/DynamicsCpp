@@ -170,18 +170,93 @@ arma::vec cdf(arma::vec &pdf)
 
 //================================================
 // Schroder_BackwardIntegration
+// NOTE: some modification are needed if this has to be a general function
+// NOTE: index schereder integration sligthly different that python
+// time decay computation: NOT T60
 //================================================
-double Schroder_BackwardIntegration(arma::vec &envelope, double tx)
+double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double tx)
 {
+    double Tx;
+    arma::vec Pfit(2);
+    
     //take the signal only after the max
     double max = envelope.max();
+    arma::uvec index_max = arma::find(envelope==max);
+    arma::vec envelope_after_max { envelope( arma::span( index_max[0], envelope.size() - 1 )) };
     
-    
-    // ^2 and backward integration
-    
-    //Db trasformation and normalization
-    
-    //fitting and Tx calculation
-    
-    return 0;
+    //================================================ CONTROL
+    if ( envelope_after_max.min() < - (5 + tx) )
+    {
+        // Db inverse-trasformation, ^2 and backward integration
+        envelope_after_max = arma::exp10( envelope_after_max / 20);
+        envelope_after_max = arma::pow(envelope_after_max, 2);
+        
+            //armadillo 7 doesn't have reverse function and doesn't have reverse iterator
+        arma::vec schroder_integration(envelope_after_max.size());
+        arma::vec::iterator schroder_iter = schroder_integration.end() - 1; //iterator pointing to the last element
+        arma::vec::iterator envelope_iter = envelope_after_max.end() - 1; //iterator pointing to the last element
+        double integration_dep = 0;
+        
+            // != .begin() - 1      cause if just != .begin() won't consider the first element
+        for ( ; schroder_iter != schroder_integration.begin() - 1 && envelope_iter != envelope_after_max.begin() - 1; schroder_iter--, envelope_iter--)
+        {
+            integration_dep = *envelope_iter + integration_dep;
+            *schroder_iter = integration_dep;
+        }
+        //    schroder_integration.print();
+        
+        //normalization and Db trasformation
+        schroder_integration = schroder_integration / schroder_integration.max();
+        schroder_integration = 20* arma::log10(schroder_integration);
+        // time vector needed for poly fitting
+        arma::vec time { arma::linspace<arma::vec>(0, (schroder_integration.size() - 1) * hop_size, schroder_integration.size())};
+        
+        //fitting and Tx calculation
+        arma::uvec index_start_fitting = arma::find( schroder_integration < - 5 );
+        arma::uvec index_end_fitting = arma::find( schroder_integration < - (5 + tx) ); // is gonna be empty if there aren't value below - (5 + tx) => impossible to fit
+        
+//        schroder_integration.print();
+        
+        //================================================ CONTROL
+        if ( index_end_fitting.size() != 0 ) // => possible to fit
+        {
+            int start_index = index_start_fitting[0];
+            int end_index = index_end_fitting[0];
+            // linear fitting
+            Pfit = linearFit( time(arma::span(start_index,end_index)), schroder_integration(arma::span(start_index,end_index)) );
+            
+            // time decay computation: NOT T60
+            Tx = - tx / Pfit[0];
+        }
+        else
+        {
+             Tx = NULL;
+        }
+        
+    }
+    else
+    {
+        Tx = NULL;
+    }
+
+    return Tx;
 }
+
+
+//================================================ Linear Fit
+arma::vec linearFit(arma::vec x, arma::vec y)  //VALUE NOT PASSED BY REFERENCE
+{
+    arma::vec b(2);
+    
+    // X = [x ,1]
+    arma::mat X(x.size(), 1, arma::fill::ones ); //X with just a col of ones
+    X.insert_cols(0, x); //add x col
+    // oore-penrose pseudoinverse computation
+    arma::mat PseudoInv = arma::pinv(X); // PseudoInv = ( X.t() * X )^-1 * X.t()
+    
+    //normal equation solution b = ( X.t() * X )^-1 * X.t() * y
+    b = PseudoInv * y;
+    
+    return b;
+}
+

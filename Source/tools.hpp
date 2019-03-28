@@ -39,5 +39,8 @@ arma::gmm_diag GMM_AIC(arma::mat &rmsdb, int N_components);
 arma::vec pdf( double mean, double variance, arma::vec &x);
 arma::vec cdf(arma::vec &pdf);
 
+//linear regression
+arma::vec linearFit(arma::vec x, arma::vec y);
 //Schroder
-double Schroder_BackwardIntegration(arma::vec &envelope, double tx);
+double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double tx);
+

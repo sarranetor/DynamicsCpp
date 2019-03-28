@@ -33,7 +33,9 @@ int main (int argc, char* argv[])
     //==================================================
     
 //    File file("/Users/Livio.Saracino/Developer/DunningKruger1_10sComp.wav");
-    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/MoosSnareTop1.wav");
+//    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/MoosSnareTop1.wav");
+    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/CommitmentSnareTop1.wav");
+//    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/KillerQueen1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/FunnyValentines1.wav");
     
     std::vector<double> _inSignal;
@@ -279,10 +281,34 @@ int main (int argc, char* argv[])
     //================================================== schroder
     
     double Tx;
+    arma::vec envelop_one_event;
+    arma::vec Thold_vector;
+    
 //    int s = main_event_list.;
 //    int e = (main_event_list[0])[1];
-    arma::vec envelop_one_event{ envelopePeak.envelope( arma::span( main_event_list.front()[0], main_event_list.front()[1] ) ) };
-    Tx = Schroder_BackwardIntegration( envelop_one_event , 30);
+    
+    counter_row = 0;
+    for ( iter = main_event_list.begin(); iter != main_event_list.end(); iter++)
+    {
+        envelop_one_event = envelopePeak.envelope( arma::span( (*iter)[0], (*iter)[1] ) );
+//        envelop_one_event.print();
+        Tx = Schroder_BackwardIntegration( envelop_one_event , step, 30); //if it fails Tx == NULL [0]  // Tx in [ms]
+        
+        if ( Tx != 0)
+        {
+            arma::rowvec row{ Tx }; //create a new row to append
+            Thold_vector.insert_rows(counter_row, row); //append
+            counter_row++; //increment pointer to row
+        }
+        
+    }
+    
+    //================================================== Th and Tr
+    double Th = arma::mean(Thold_vector);
+    double Tr = Ioi_main_spill_mean * 1e3 - Th;
+    
+    std::cout << "Thold: " << Th << std::endl;
+    std::cout << "Trelease: " << Tr << std::endl;
     
     return 0;
 }
