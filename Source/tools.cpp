@@ -68,7 +68,7 @@ arma::gmm_diag GMM_AIC(arma::mat &signal, int N_components)
         AICtest = -2 * likehood + 2*(modelDep.means.size() + modelDep.dcovs.size() + i - 1);
         AIC = -2 * overall_likelihood * signal.size() + 2*(modelDep.means.size() + modelDep.dcovs.size() + i - 1);
         
-        printf("\n iter:%d AIC:%lf", i, AIC);
+//        printf("\n iter:%d AIC:%lf", i, AIC);
         //        printf("\n iter:%d AICtest:%lf", i, AICtest);
         
         if ( AIC < oldAIC ){
@@ -138,6 +138,60 @@ envelope_type Envelope(arma::vec &x,double &fs, double &rms_length, double &over
     return envelope;
 }
 
+
+//================================================
+// MICRODYNAMICS // transient event list [[index in rms fast, type event], ..]  type event: ascendent[1]/descendent[-1]
+//================================================
+std::list< std::vector<int> > microdynamics(envelope_type &envelope_rms_fast, envelope_type &envelope_rms_slow, double rms_fast_length, double rms_slow_length, double overlap_rms_fast, int hystereisi_high_threshold, int hystereisi_low_threshold, double &start)
+{
+    std::list< std::vector<int> > transient_list;
+    // first sample of rms_slow is later that rms_fas cause bigger window
+    start = std::round( (rms_slow_length/2 - rms_fast_length/2) / (rms_fast_length * (1 - overlap_rms_fast)) );
+    
+    // rms_fast - rms_slow
+    arma::vec DiffRms{ envelope_rms_fast.envelope(arma::span(start, envelope_rms_slow.envelope.size()-1+start)) - envelope_rms_slow.envelope };
+    
+    //flag variables
+    int dep = 0; // 0: below threshold         1: above threshold
+    //set flag variable
+    if ( DiffRms[0] < 0 )
+        dep = -1;
+    // transient event [index in rms fast, type event]  type event: ascendent[1]/descendent[-1]
+    std::vector<int> transient(2);
+    
+    
+    //================================================ iteration among DiffRms values
+    int i=0;
+    for ( arma::vec::iterator ptr_DiffRms=DiffRms.begin(); ptr_DiffRms<DiffRms.end(); i++, ptr_DiffRms++ ) //TOO CONVOLUTED!
+    {
+        if ( *ptr_DiffRms < hystereisi_low_threshold ) //descending
+        {
+            if (dep == 1)
+            {
+                transient[0] = i - 1 ; // - 1 cause i want to catch the transient the sample before happening  // CAREFULL FOR BUGS !!
+                transient[1] = -1;
+                transient_list.push_back(transient);
+            }
+            //end processing
+            dep = -1;
+        }
+        else if ( *ptr_DiffRms > hystereisi_high_threshold ) // ascending
+        {
+            if (dep == -1)
+            {
+                transient[0] = i - 1; // - 1 cause i want to catch the transient the sample before happening
+                transient[1] = 1;
+                transient_list.push_back(transient);
+            }
+            //end processing
+            dep = 1;
+        }
+    }
+    
+    
+    return transient_list;
+}
+
 //================================================
 // PDF OF GAISSIAN
 //================================================
@@ -165,6 +219,46 @@ arma::vec cdf(arma::vec &pdf)
     cdf = cdf / cdf.max();
     
     return cdf;
+}
+
+//================================================
+// PERCENTILE FROM GMM MODEL -- sample space range should contain the pdf (pdf > 1e-10 in sample space range)
+//===============================================
+double getPercentile(arma::gmm_diag model, double percentile, double sample_space_start, double sample_space_end, double sample_space_points)
+{
+    double sample_space_percentile_value;
+    
+    //====================== sample space considered
+    arma::vec x{arma::linspace<arma::vec>( sample_space_start, sample_space_end, sample_space_points)};
+    
+    // ====================== pdf computation
+    arma::vec pdf_model(x.size());
+    double mean, variance, weight;
+    // iterate though the sample space
+    for (int i=0; i<x.size(); i++)
+    {
+        // initialize pdf(i)
+        pdf_model(i) = 0;
+        //iterate through gaussians in model
+        for ( int j = 0; j < model.n_gaus(); j++)
+        {
+            mean = model.means[j];
+            variance = model.dcovs[j];
+            weight = model.hefts[j];
+            //cumulative sum for each component in the model
+            pdf_model(i) = pdf_model(i) + weight * (1/(std::sqrt(2 * arma::datum::pi * variance))) * std::exp( - std::pow((x(i) - mean) , 2) / (2 * variance) );
+        }
+    }
+    
+    // ====================== cdf computation
+    arma::vec cdf_model{ cdf(pdf_model) };
+    
+    // ====================== percentile computation
+    arma::uvec indexes = arma::find( cdf_model < percentile );  //value for which p(X<sample_space_percentile_value) < percentile
+    sample_space_percentile_value = x[ indexes.max() ];
+    
+    
+    return sample_space_percentile_value;
 }
 
 
