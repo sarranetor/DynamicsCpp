@@ -30,11 +30,11 @@ int main (int argc, char* argv[])
     // AUDIO FILE LOAD
     //==================================================
     
-    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/MoosSnareTop1.wav");
+//    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/MoosSnareTop1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/CommitmentSnareTop1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/KillerQueen1.wav");
-//    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/FunnyValentines1.wav");
-//    File file("/Users/Livio.Saracino/Developer/DunningKruger1_10sComp.wav");
+    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/FunnyValentines1.wav");
+//    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/DunningKruger1_10s.wav");
     
     std::vector<double> _inSignal;
     double _fs;
@@ -55,11 +55,16 @@ int main (int argc, char* argv[])
     //=================================================
     // SNARE / KICK GATE AND COMPRESSOR SMART PRESET
     //=================================================
-    std::map<std::string, double> m = snare_kick_dynamics(inSignal, _fs);
-    //print map
-    for (auto it = m.cbegin(); it != m.cend(); ++it) {
-        std::cout << "{" << (*it).first << ": " << (*it).second << "}\n";
-    }
+//    std::map<std::string, double> m = snare_kick_dynamics(inSignal, _fs);
+//    //print map
+//    for (auto it = m.cbegin(); it != m.cend(); ++it) {
+//        std::cout << "{" << (*it).first << ": " << (*it).second << "}\n";
+//    }
+    
+    //=================================================
+    // VOICE COMPRESSOR SMART PRESET
+    //=================================================
+    std::map<std::string, double> m = voice_dynamics(inSignal, _fs);
     
     return 0;
 }

@@ -281,7 +281,7 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     double MaxLevel_peak = getPercentile(model_Peak, 0.998, -100, 0, 1000);
     
     double threshold = MaxLevel_peak - 30;
-    double ratio = 1/3;
+    double ratio = 1.0/3.0;
     
     double MaxAfterComp = threshold + (MaxLevel_peak-threshold)*ratio;
     double MakeUPgain = MaxLevel_peak - MaxAfterComp;
@@ -314,7 +314,218 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
 {
     std::map<std::string, double> m;
     
+    double release_Dbrange_transient = 10;
+    double attack_Dbrange_transient = 7;
+    double MaxTimeDecay = 0.08;
+    double MaxTimeAttack = 0.03;
     
+    //==================================================
+    // ENVELOPE COMPUTATION
+    //==================================================
+    // envelop settings
+    double rms_length = 10;
+    double overlap = 0.8;
+    // rms slow settings
+    double rms_length_slow = 200;
+    double step = rms_length * (1 - overlap); //hop size
+    double overlap_slow = ((rms_length * (1 - overlap)) - rms_length_slow) / (- rms_length_slow);
+    // envelope struct declaration
+    envelope_type envelopeRms, envelopePeak, envelopeRms_slow;
+    
+    envelopeRms = Envelope(inSignal, _fs, rms_length, overlap, "rms"); //rms fast
+    envelopeRms_slow = Envelope(inSignal, _fs, rms_length_slow, overlap_slow, "rms"); //rms slow
+    
+    //    envelopeRms_slow.envelope.print();
+    
+    envelopePeak = Envelope(inSignal, _fs, rms_length, overlap, "peak");
+    
+    //==================================================
+    // GMM + AIC [peak and rms]
+    //==================================================
+    //data as arma::mat. each col is an element. //deleate the element below -100 db. or sub setting. silence!
+    // counting number of silence elements
+    
+    int N_silence_elem_rms = 0;
+    int N_silence_elem_peak = 0;
+    arma::vec::iterator ptr_vec;
+    
+    for (ptr_vec = envelopeRms.envelope.begin() ; ptr_vec != envelopeRms.envelope.end() ; ptr_vec++)
+        if ( *ptr_vec < -100 )
+            N_silence_elem_rms++;
+    
+    for (ptr_vec = envelopePeak.envelope.begin() ; ptr_vec != envelopePeak.envelope.end() ; ptr_vec++)
+        if ( *ptr_vec < -100 )
+            N_silence_elem_peak++;
+    
+    // vector for gmm modelling RMS --------
+    arma::mat rmsdb(1, envelopeRms.envelope.size() - N_silence_elem_rms );
+    for (arma::mat::iterator ptr_mat = rmsdb.begin(), ptr_vec = envelopeRms.envelope.begin(); ptr_mat != rmsdb.end() && ptr_vec != envelopeRms.envelope.end(); ptr_vec++ ){
+        if ( *ptr_vec > -100 ){
+            *ptr_mat = *ptr_vec;
+            ptr_mat++;
+        }
+    }
+    
+    // vector for gmm modelling Peak --------
+    arma::mat peak_db(1, envelopePeak.envelope.size() - N_silence_elem_peak );
+    for (arma::mat::iterator ptr_mat = peak_db.begin(), ptr_vec = envelopePeak.envelope.begin(); ptr_mat != peak_db.end() && ptr_vec != envelopePeak.envelope.end(); ptr_vec++ ){
+        if ( *ptr_vec > -100 ){
+            *ptr_mat = *ptr_vec;
+            ptr_mat++;
+        }
+    }
+    
+    // GMM + AIC -----------------------------------
+    arma::gmm_diag model_Rms{GMM_AIC(rmsdb, 7)};
+//        std::cout << "\nmeans" << std::endl;
+//        model_Rms.means.print();
+//        std::cout << "conv" << std::endl;
+//        model_Rms.dcovs.print();
+//        std::cout << "wheigth" << std::endl;
+//        model_Rms.hefts.print();
+    
+    // GMM + AIC -----------------------------------
+    arma::gmm_diag model_Peak{GMM_AIC(peak_db, 7)};
+    //    std::cout << "\nmeans" << std::endl;
+    //    model_Peak.means.print();
+    //    std::cout << "conv" << std::endl;
+    //    model_Peak.dcovs.print();
+    //    std::cout << "wheigth" << std::endl;
+    //    model_Peak.hefts.print();
+    
+    
+    //==================================================
+    // compressor threshold
+    //==================================================
+    
+    double ratio = 1.0/3.0;
+    double MaxLevel_rms = getPercentile(model_Rms, 0.998, -100, 0, 1000);
+    double MaxLevel_peak = getPercentile(model_Peak, 0.998, -100, 0, 1000);
+    
+    /*
+     the voice db range is considered to be 30 db thus [MaxLevel_rms, MaxLevel_rms - 30].
+     this range is divided in 4 areas each one of 30/4 = 7.5 db, and these areas are labbeled as:
+     very loud, loud, soft, very soft.
+     */
+    
+    // find first gaussian in with loud label
+    arma::uvec index_not_veryloud = arma::find( model_Rms.means < MaxLevel_rms - 30/4 );
+    arma::uvec index_loud_gaussian = arma::find( model_Rms.means == model_Rms.means.elem(index_not_veryloud).max() );
+    
+    // value that the process could reach in db
+    arma::vec x{arma::linspace<arma::vec>(-100, 0, 1000)}; // 1000 elements, step 0.1 db
+    //  pdf single gaussian calculation
+    arma::vec pdf_loud_gaussian{pdf( model_Rms.means[index_loud_gaussian[0]] , model_Rms.dcovs[index_loud_gaussian[0]], x)};
+    // cdf
+    arma::vec cdf_loud_gaussian{ cdf(pdf_loud_gaussian) };
+    // percentile computation
+    arma::uvec indexes = arma::find( cdf_loud_gaussian < 0.99 );  //value for which p(X<gate_thershold)<0.98
+    
+    double MaxAfterComp = x[ indexes.max() ];
+    double threshold = (MaxAfterComp - MaxLevel_rms * ratio) / (1 - ratio);
+    double MakeUPgain = MaxLevel_rms - MaxAfterComp;
+    
+    if ( MakeUPgain > std::abs(MaxLevel_peak) )
+    {
+        MakeUPgain = std::abs(MaxLevel_peak);
+    }
+    
+    //==================================================
+    // compressor timing computations [Tr and Ta] -- using rms envelope
+    //==================================================
+    
+    //================================================== microdynamics
+    double start;
+    std::list< std::vector<int> > transient_list;
+    
+    transient_list = microdynamics(envelopeRms, envelopeRms_slow, rms_length, rms_length_slow, overlap, 1, -1, start);
+    
+    //================================================== transient evaluation
+    arma::vec Trelease_vector , Tattack_vector;
+    int counter_row_release = 0; //each time the condition are respected a row is added to Trelease_vector
+    int counter_row_attack = 0; //each time the condition are respected a row is added to Tattack_vector
+    double end_index = start + envelopeRms_slow.envelope.size(); //last elem to consider in envelopeRms [after this rms slow  doesn't exist]
+    
+    //=========== attack calculation variable
+    double attack_time; // store computed attack before to add in Tattack_vector
+    double start_event_rms_value; // rms value where the attack start
+    double Dbrange_transient_attack;
+    
+    //=========== release decay calculation variable
+    double decay_time; // store computed decay before to add in Trelease_vector
+    double end_event_rms_value; // rms value where the decay start
+    double Dbrange_transient_release;
+    
+    for ( std::vector<int> l : transient_list)
+    {
+        if ( l[1] == 1 ) // == 1 [ascendent]
+        {
+            start_event_rms_value = envelopeRms.envelope[ start + l[0] ];
+            Dbrange_transient_attack = start_event_rms_value - attack_Dbrange_transient;
+            
+            // index where the signal goes to Dbrange_transient_release. first index.
+            arma::uvec index = arma::find(  envelopeRms.envelope(arma::span(0, start + l[0])) < Dbrange_transient_attack );
+            
+            attack_time = envelopeRms.time[start + l[0]] - envelopeRms.time[ *(index.end()-1) ];
+            
+            // the attack time is considered only if is less that a max
+            if ( attack_time <= MaxTimeAttack )
+            {
+                arma::rowvec row { attack_time };
+                Tattack_vector.insert_rows(counter_row_attack, row);
+                counter_row_attack++; // increase row counter
+            }
+            
+        }
+        else if ( l[1] == -1 ) // ==-1 [descendent]
+        {
+            end_event_rms_value = envelopeRms.envelope[ start + l[0] ];
+            Dbrange_transient_release = end_event_rms_value - release_Dbrange_transient;
+            
+            // index where the signal goes to Dbrange_transient_release. first index.
+            arma::uvec index = arma::find(  envelopeRms.envelope(arma::span(start + l[0], end_index)) < Dbrange_transient_release );
+            
+            // start +, cause the transient index refers to the Diff btw fast and slow. but the envelopeRms.time[start] = envelopeRms_slow.time[0]
+            decay_time = envelopeRms.time[ start + l[0] + index[0]] - envelopeRms.time[start + l[0]];
+            
+            // the decay time is considered only if is less that a max
+            if ( decay_time <= MaxTimeDecay)
+            {
+                arma::rowvec row { decay_time };
+                Trelease_vector.insert_rows(counter_row_release, row);
+                counter_row_release++; // increase row counter
+            }
+        }
+    }
+    
+//    Trelease_vector.print();
+//    Tattack_vector.print();
+    
+    //==================================================
+    // Tattack_vector and Trelease_vector statistics and chosing criteria
+    //==================================================
+    
+    arma::mat Trelease_vector_ms { Trelease_vector * 1000 };
+    Trelease_vector_ms = Trelease_vector_ms.t();
+    
+    arma::gmm_diag model_Trelease{ GMM_AIC(Trelease_vector_ms, 4) };
+    std::cout << "\nmeans" << std::endl;
+    model_Trelease.means.print();
+    std::cout << "conv" << std::endl;
+    model_Trelease.dcovs.print();
+    std::cout << "wheigth" << std::endl;
+    model_Trelease.hefts.print();
+    
+    arma::mat Tattack_vector_ms { Tattack_vector * 1000 };
+    Tattack_vector_ms = Tattack_vector_ms.t();
+    
+    arma::gmm_diag model_Tattack{ GMM_AIC(Tattack_vector_ms, 4) };
+    std::cout << "\nmeans" << std::endl;
+    model_Tattack.means.print();
+    std::cout << "conv" << std::endl;
+    model_Tattack.dcovs.print();
+    std::cout << "wheigth" << std::endl;
+    model_Tattack.hefts.print();
     
     return m;
 }

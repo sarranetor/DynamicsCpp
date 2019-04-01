@@ -68,7 +68,7 @@ arma::gmm_diag GMM_AIC(arma::mat &signal, int N_components)
         AICtest = -2 * likehood + 2*(modelDep.means.size() + modelDep.dcovs.size() + i - 1);
         AIC = -2 * overall_likelihood * signal.size() + 2*(modelDep.means.size() + modelDep.dcovs.size() + i - 1);
         
-//        printf("\n iter:%d AIC:%lf", i, AIC);
+        printf("\n iter:%d AIC:%lf", i, AIC);
         //        printf("\n iter:%d AICtest:%lf", i, AICtest);
         
         if ( AIC < oldAIC ){
