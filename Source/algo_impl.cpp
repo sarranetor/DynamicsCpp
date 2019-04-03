@@ -8,6 +8,7 @@
 #include "algo_impl.hpp"
 //#include "tools.hpp"
 
+#define COMP_RATIO 1.0/3.0
 
 //====================================================================================================
 // SNARE / KICK GATE AND COMPRESSOR SMART PRESET
@@ -246,7 +247,7 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
         
         //=============== computation of Thold gate == Trelease compressor
         Tx_hold = Schroder_BackwardIntegration( envelop_one_event , step, 30); //if it fails Tx == NULL [0]  // Tx in [ms]
-        if ( Tx_hold != 0)
+        if ( Tx_hold > 0.0)
         {
             arma::rowvec row{ Tx_hold }; //create a new row to append
             Thold_vector.insert_rows(counter_row_hold, row); //append
@@ -255,7 +256,7 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
         
         //=============== computation of Tattack compressor
         Tx_attack = Schroder_BackwardIntegration( envelop_one_event , step, 10); //if it fails Tx == NULL [0]  // Tx in [ms]
-        if ( Tx_attack != 0)
+        if ( Tx_attack > 0.0)
         {
             arma::rowvec row{ Tx_attack }; //create a new row to append
             Tattack_vector.insert_rows(counter_row_attack, row); //append
@@ -290,6 +291,7 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     {
         MakeUPgain = std::abs(MaxLevel_peak);
     }
+    
     //fill map
     m.insert(std::pair<std::string, double>("gate_threshold", gate_threshold));
     m.insert(std::pair<std::string, double>("gate_hold", Th_gate));
@@ -398,7 +400,7 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     // compressor threshold
     //==================================================
     
-    double ratio = 1.0/3.0;
+    double ratio = COMP_RATIO;
     double MaxLevel_rms = getPercentile(model_Rms, 0.998, -100, 0, 1000);
     double MaxLevel_peak = getPercentile(model_Peak, 0.998, -100, 0, 1000);
     
@@ -505,27 +507,45 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     // Tattack_vector and Trelease_vector statistics and chosing criteria
     //==================================================
     
-    arma::mat Trelease_vector_ms { Trelease_vector * 1000 };
+    //control when Trelease_vector.size() very low
+    // ..
+    
+    arma::mat Trelease_vector_ms { Trelease_vector * 1000 }; // *1000 for [ms]
     Trelease_vector_ms = Trelease_vector_ms.t();
     
     arma::gmm_diag model_Trelease{ GMM_AIC(Trelease_vector_ms, 4) };
-    std::cout << "\nmeans" << std::endl;
-    model_Trelease.means.print();
-    std::cout << "conv" << std::endl;
-    model_Trelease.dcovs.print();
-    std::cout << "wheigth" << std::endl;
-    model_Trelease.hefts.print();
+//    std::cout << "\nmeans" << std::endl;
+//    model_Trelease.means.print();
+//    std::cout << "conv" << std::endl;
+//    model_Trelease.dcovs.print();
+//    std::cout << "weigth" << std::endl;
+//    model_Trelease.hefts.print();
     
-    arma::mat Tattack_vector_ms { Tattack_vector * 1000 };
+    arma::mat Tattack_vector_ms { Tattack_vector * 1000 }; // *1000 for [ms]
     Tattack_vector_ms = Tattack_vector_ms.t();
     
     arma::gmm_diag model_Tattack{ GMM_AIC(Tattack_vector_ms, 4) };
-    std::cout << "\nmeans" << std::endl;
-    model_Tattack.means.print();
-    std::cout << "conv" << std::endl;
-    model_Tattack.dcovs.print();
-    std::cout << "wheigth" << std::endl;
-    model_Tattack.hefts.print();
+//    std::cout << "\nmeans" << std::endl;
+//    model_Tattack.means.print();
+//    std::cout << "conv" << std::endl;
+//    model_Tattack.dcovs.print();
+//    std::cout << "weigth" << std::endl;
+//    model_Tattack.hefts.print();
+    
+    // selection criteria
+    // ..
+    
+    double Tr = getPercentile(model_Trelease, 0.5, 0, 200, 1000);
+    double Ta = getPercentile(model_Tattack, 0.5, 0, 100, 500);
+    // ..
+    Tr = Tr * 2; // cause i want to measure t20 and i approximate t20 = t10 * 2
+    
+    //fill map
+    m.insert(std::pair<std::string, double>("comp_threshold", threshold));
+    m.insert(std::pair<std::string, double>("comp_ratio", ratio));
+    m.insert(std::pair<std::string, double>("comp_makeupgain", MakeUPgain));
+    m.insert(std::pair<std::string, double>("comp_attack", Ta));
+    m.insert(std::pair<std::string, double>("comp_release", Tr));
     
     return m;
 }

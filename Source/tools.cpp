@@ -68,7 +68,7 @@ arma::gmm_diag GMM_AIC(arma::mat &signal, int N_components)
         AICtest = -2 * likehood + 2*(modelDep.means.size() + modelDep.dcovs.size() + i - 1);
         AIC = -2 * overall_likelihood * signal.size() + 2*(modelDep.means.size() + modelDep.dcovs.size() + i - 1);
         
-        printf("\n iter:%d AIC:%lf", i, AIC);
+//        printf("\n iter:%d AIC:%lf", i, AIC);
         //        printf("\n iter:%d AICtest:%lf", i, AICtest);
         
         if ( AIC < oldAIC ){
@@ -270,7 +270,7 @@ double getPercentile(arma::gmm_diag model, double percentile, double sample_spac
 //================================================
 double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double tx)
 {
-    double Tx;
+    double Tx {0.0};
     arma::vec Pfit(2);
     
     //take the signal only after the max
@@ -324,14 +324,14 @@ double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double
         }
         else
         {
-             Tx = NULL;
+             Tx = 0.0;
         }
         
     }
-    else
-    {
-        Tx = NULL;
-    }
+//    else
+//    {
+//        Tx = 0.0;
+//    }
 
     return Tx;
 }

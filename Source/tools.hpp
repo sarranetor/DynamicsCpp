@@ -44,6 +44,8 @@ arma::vec pdf( double mean, double variance, arma::vec &x);
 arma::vec cdf(arma::vec &pdf);
 //percentile from gmm model
 double getPercentile(arma::gmm_diag model, double percentile, double sample_space_start, double sample_space_end, double sample_space_points);
+//getModelPdf
+// ..
 
 //linear regression
 arma::vec linearFit(arma::vec x, arma::vec y);

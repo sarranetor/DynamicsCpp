@@ -23,8 +23,11 @@
 
 // gate and compressor drums smart preset
 std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_fs);
-//gate threshold computation
+// gate threshold computation
 double GateThreshold(arma::gmm_diag &model);
 
 // compressor melodic smart preset
 std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs);
+
+// other instruments
+// ..

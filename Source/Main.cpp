@@ -65,6 +65,10 @@ int main (int argc, char* argv[])
     // VOICE COMPRESSOR SMART PRESET
     //=================================================
     std::map<std::string, double> m = voice_dynamics(inSignal, _fs);
+    //print map
+    for (auto it = m.cbegin(); it != m.cend(); ++it) {
+        std::cout << "{" << (*it).first << ": " << (*it).second << "}\n";
+    }
     
     return 0;
 }
