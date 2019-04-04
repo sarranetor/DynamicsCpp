@@ -69,7 +69,7 @@ int main (int argc, char* argv[])
     for (auto it = m.cbegin(); it != m.cend(); ++it) {
         std::cout << "{" << (*it).first << ": " << (*it).second << "}\n";
     }
-    
+
     return 0;
 }
 
