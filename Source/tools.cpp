@@ -48,6 +48,8 @@ void open(std::vector<double> &_inSignal, File &file, double &_fs, double &_inSi
 //================================================
 // GMM + AIC AND RETURN THE CHOSEN MODEL
 //================================================
+constexpr int kmean_iteration = 20;
+constexpr int EM_iteration = 10;
 arma::gmm_diag GMM_AIC(arma::mat &signal, int N_components)
 {
     arma::gmm_diag model, modelDep; // modelDep deposit variable
@@ -55,7 +57,7 @@ arma::gmm_diag GMM_AIC(arma::mat &signal, int N_components)
     
     for ( int i=1; i<=N_components; i++){
         
-        modelDep.learn(signal, i, arma::eucl_dist, arma::random_spread, 20, 10, 1e-6, false);
+        modelDep.learn(signal, i, arma::eucl_dist, arma::random_spread, kmean_iteration, EM_iteration, 1e-6, false);
         // per sample average log likehood
         overall_likelihood = modelDep.avg_log_p(signal);
         
@@ -84,67 +86,85 @@ arma::gmm_diag GMM_AIC(arma::mat &signal, int N_components)
 //================================================
 // RMS OR PEAK ENVELOPE COMPUTATION
 //================================================
-envelope_type Envelope(arma::vec &x,double &fs, double &rms_length, double &overlap, String type)
+envelope_type Envelope(arma::vec &x, const double &fs, const double &rms_length, const double &overlap, const String type)
 {
     double x_length = std::floor(x.size());
     double rms_samples =  std::floor((rms_length * (fs/1000)));
     double hop_size =  std::floor(((1-overlap) * rms_samples));
     double n_loop =  std::floor(((x_length - rms_samples)/hop_size));
     
-    // rms envelope output
+    // envelope to return
     envelope_type envelope;
     envelope.envelope.zeros(n_loop);
     envelope.time.zeros(n_loop);
     
     double startWindow, endWindow;
-    double EnvelopeValue, time;
+    // depending on 'String type' windowEnvCalculation points to the peakValue or rmsValue function
+    typedef double (*env_ptr)(double,double,arma::vec&); // pointer to function type double f(double,double)
+    env_ptr windowEnvCalculation;
+    auto  PeakValue = [] (double start, double end, arma::vec &x) -> double { return arma::abs(x(arma::span(start,end))).max(); };
+    auto  RmsValue = [] (double start, double end, arma::vec &x) -> double {  return sqrt( arma::mean( arma::square( x(arma::span(start,end))))); };
+    if(type=="peak")
+    {
+        windowEnvCalculation = PeakValue;
+    }
+    else if (type=="rms")
+    {
+        windowEnvCalculation = RmsValue;
+    }
+        
+    
     arma::vec::iterator ptr_env, ptr_time;
     //inizialise iterators
     ptr_env = envelope.envelope.begin();
     ptr_time = envelope.time.begin();
     
     //conpute envelope ------------------------------------
-    for(int n=0; n<n_loop; n++){
+    for(int n=0; n<n_loop; n++)
+    {
         //window extremes
         startWindow = n * hop_size;
         endWindow = (startWindow+rms_samples)<x_length ? (startWindow+rms_samples) : x_length;
         
-        //compute rmsValue or peak and corresponding time of the computed value
-        if(type=="peak"){
-            EnvelopeValue = arma::abs(x(arma::span(startWindow,endWindow))).max();
-        }
-        else if(type=="rms"){
-            //            x(arma::span(startWindow,endWindow)).print();
-            
-            EnvelopeValue = arma::mean( arma::square( x(arma::span(startWindow,endWindow)) ));
-            EnvelopeValue = sqrt(EnvelopeValue);
-        }
-        
-        time = (startWindow + endWindow) / fs / 2.0;
-        
-        //save the values
-        *(ptr_env+n) = EnvelopeValue; // db transformation // if n is not valid ??
-        *(ptr_time+n) = time;
-        
-        //        printf(" length: %d", endWindow - startWindow );
-        //        printf(" mean: %f", rmsValue );
-        //        printf(" time: %f", time );
+        //compute rmsValue/peak and corresponding time of the computed value
+        *(ptr_env+n) = (*windowEnvCalculation)(startWindow, endWindow, x);;
+        *(ptr_time+n) = (startWindow + endWindow) / fs / 2.0;
     }
     
     // db transformation
     envelope.envelope = 20* arma::log10(envelope.envelope + 0.0000001);
     
-    
     return envelope;
 }
 
+//================================================
+// ..
+//================================================
+arma::mat ReduceDynamicRange(envelope_type &envelope , const double min_value )
+{
+    arma::mat envelope_reduced;
+    int coloum_number = 0;
+    arma::vec c(1);
+    
+    for ( arma::vec::iterator e = envelope.envelope.begin(); e != envelope.envelope.end(); e++ )
+    {
+        if ( *e > min_value )
+        {
+            c(0) = *e;
+            envelope_reduced.insert_cols(coloum_number, c);
+            coloum_number++;
+        }
+    }
+
+    return envelope_reduced;
+}
 
 //================================================
 // MICRODYNAMICS // transient event list [[index in rms fast, type event], ..]  type event: ascendent[1]/descendent[-1]
 //================================================
-std::list< std::vector<int> > microdynamics(envelope_type &envelope_rms_fast, envelope_type &envelope_rms_slow, double rms_fast_length, double rms_slow_length, double overlap_rms_fast, int hystereisi_high_threshold, int hystereisi_low_threshold, double &start)
+std::vector< std::array<int,2> > microdynamics(envelope_type &envelope_rms_fast, envelope_type &envelope_rms_slow, double rms_fast_length, double rms_slow_length, double overlap_rms_fast, int hystereisi_high_threshold, int hystereisi_low_threshold, double &start)
 {
-    std::list< std::vector<int> > transient_list;
+    std::vector< std::array<int,2> > transient_vector;
     // first sample of rms_slow is later that rms_fas cause bigger window
     start = std::round( (rms_slow_length/2 - rms_fast_length/2) / (rms_fast_length * (1 - overlap_rms_fast)) );
     
@@ -157,11 +177,12 @@ std::list< std::vector<int> > microdynamics(envelope_type &envelope_rms_fast, en
     if ( DiffRms[0] < 0 )
         dep = -1;
     // transient event [index in rms fast, type event]  type event: ascendent[1]/descendent[-1]
-    std::vector<int> transient(2);
+    std::array<int,2> transient;
     
     
     //================================================ iteration among DiffRms values
     int i=0;
+//    for(auto& diff : DiffRms)
     for ( arma::vec::iterator ptr_DiffRms=DiffRms.begin(); ptr_DiffRms<DiffRms.end(); i++, ptr_DiffRms++ ) //TOO CONVOLUTED!
     {
         if ( *ptr_DiffRms < hystereisi_low_threshold ) //descending
@@ -170,7 +191,7 @@ std::list< std::vector<int> > microdynamics(envelope_type &envelope_rms_fast, en
             {
                 transient[0] = i - 1 ; // - 1 cause i want to catch the transient the sample before happening  // CAREFULL FOR BUGS !!
                 transient[1] = -1;
-                transient_list.push_back(transient);
+                transient_vector.push_back(transient);
             }
             //end processing
             dep = -1;
@@ -181,7 +202,7 @@ std::list< std::vector<int> > microdynamics(envelope_type &envelope_rms_fast, en
             {
                 transient[0] = i - 1; // - 1 cause i want to catch the transient the sample before happening
                 transient[1] = 1;
-                transient_list.push_back(transient);
+                transient_vector.push_back(transient);
             }
             //end processing
             dep = 1;
@@ -189,7 +210,7 @@ std::list< std::vector<int> > microdynamics(envelope_type &envelope_rms_fast, en
     }
     
     
-    return transient_list;
+    return transient_vector;
 }
 
 //================================================
@@ -219,6 +240,25 @@ arma::vec cdf(arma::vec &pdf)
     cdf = cdf / cdf.max();
     
     return cdf;
+}
+
+
+//================================================
+// PERCENTILE FROM GAUSSIAN
+//================================================
+double getGausPercentile(double percentile, double mean, double variance, arma::vec &x)
+{
+    double sample_space_percentile_value;
+    
+    // pdf computation
+    arma::vec pdf_gaussian { pdf(mean, variance, x) };
+    // cdf computation
+    arma::vec cdf_gaussian{ cdf(pdf_gaussian) };
+    // percentile computation
+    arma::uvec indexes = arma::find( cdf_gaussian < percentile );  //value for which p(X<sample_space_percentile_value) < percentile
+    sample_space_percentile_value = x[ indexes.max() ];
+    
+    return sample_space_percentile_value;
 }
 
 //================================================
@@ -322,16 +362,8 @@ double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double
             // time decay computation: NOT T60
             Tx = - tx / Pfit[0];
         }
-        else
-        {
-             Tx = 0.0;
-        }
-        
     }
-//    else
-//    {
-//        Tx = 0.0;
-//    }
+
 
     return Tx;
 }

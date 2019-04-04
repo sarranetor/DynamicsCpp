@@ -8,7 +8,11 @@
 #include "algo_impl.hpp"
 //#include "tools.hpp"
 
-#define COMP_RATIO 1.0/3.0
+
+// DB RANGE
+constexpr int min_db_value = -100;
+constexpr int max_db_value = 0;
+constexpr int n_db_pointsInRange = 1000;
 
 //====================================================================================================
 // SNARE / KICK GATE AND COMPRESSOR SMART PRESET
@@ -23,21 +27,21 @@ double GateThreshold(arma::gmm_diag &model)
     arma::vec SecondLaudestGaussian_Params{model.means[indexSecondLoudest[0]], model.dcovs[indexSecondLoudest[0]], model.hefts[indexSecondLoudest[0]]};
     
     // value that the process could reach in db
-    arma::vec dbAx{arma::linspace<arma::vec>(-100, 0, 1000)}; // 1000 elements, step 0.1 db
+    arma::vec dbAx{arma::linspace<arma::vec>(min_db_value, max_db_value, n_db_pointsInRange)}; // 1000 elements, step 0.1 db
     
-    //  pdf single gaussian calculation
-    arma::vec pdf_secondlaudest{pdf( model.means[indexSecondLoudest[0]] , model.dcovs[indexSecondLoudest[0]], dbAx)};
-    
-    // cdf
-    arma::vec cdf_secondlaudest{ cdf(pdf_secondlaudest) };
-    
-    // percentile computation
-    arma::uvec indexes = arma::find( cdf_secondlaudest < 0.98 );  //value for which p(X<gate_thershold)<0.98
-    double gate_thershold = dbAx[ indexes.max() ];
+    double gate_thershold = getGausPercentile(0.98, model.means[indexSecondLoudest[0]], model.dcovs[indexSecondLoudest[0]], dbAx);
     
     return gate_thershold;
 }
 
+
+// envelop settings
+constexpr double rms_length = 10;
+constexpr double overlap = 0.8;
+// rms slow settings
+constexpr double rms_length_slow = 200;
+constexpr double step = rms_length * (1 - overlap); //hop size
+constexpr double overlap_slow = ((rms_length * (1 - overlap)) - rms_length_slow) / (- rms_length_slow);
 
 std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_fs)
 {
@@ -46,13 +50,7 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     //==================================================
     // ENVELOPE COMPUTATION
     //==================================================
-    // envelop settings
-    double rms_length = 10;
-    double overlap = 0.8;
-    // rms slow settings
-    double rms_length_slow = 200;
-    double step = rms_length * (1 - overlap); //hop size
-    double overlap_slow = ((rms_length * (1 - overlap)) - rms_length_slow) / (- rms_length_slow);
+
     // envelope struct declaration
     envelope_type envelopeRms, envelopePeak, envelopeRms_slow;
     
@@ -69,37 +67,8 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     // GMM + AIC [peak and rms]
     //==================================================
     //data as arma::mat. each col is an element. //deleate the element below -100 db. or sub setting. silence!
-    // counting number of silence elements
-    
-    int N_silence_elem_rms = 0;
-    int N_silence_elem_peak = 0;
-    arma::vec::iterator ptr_vec;
-    
-    for (ptr_vec = envelopeRms.envelope.begin() ; ptr_vec != envelopeRms.envelope.end() ; ptr_vec++)
-        if ( *ptr_vec < -100 )
-            N_silence_elem_rms++;
-    
-    for (ptr_vec = envelopePeak.envelope.begin() ; ptr_vec != envelopePeak.envelope.end() ; ptr_vec++)
-        if ( *ptr_vec < -100 )
-            N_silence_elem_peak++;
-    
-    // vector for gmm modelling RMS --------
-    arma::mat rmsdb(1, envelopeRms.envelope.size() - N_silence_elem_rms );
-    for (arma::mat::iterator ptr_mat = rmsdb.begin(), ptr_vec = envelopeRms.envelope.begin(); ptr_mat != rmsdb.end() && ptr_vec != envelopeRms.envelope.end(); ptr_vec++ ){
-        if ( *ptr_vec > -100 ){
-            *ptr_mat = *ptr_vec;
-            ptr_mat++;
-        }
-    }
-    
-    // vector for gmm modelling Peak --------
-    arma::mat peak_db(1, envelopePeak.envelope.size() - N_silence_elem_peak );
-    for (arma::mat::iterator ptr_mat = peak_db.begin(), ptr_vec = envelopePeak.envelope.begin(); ptr_mat != peak_db.end() && ptr_vec != envelopePeak.envelope.end(); ptr_vec++ ){
-        if ( *ptr_vec > -100 ){
-            *ptr_mat = *ptr_vec;
-            ptr_mat++;
-        }
-    }
+    arma::mat rmsdb = ReduceDynamicRange(envelopeRms, min_db_value);
+    arma::mat peak_db = ReduceDynamicRange(envelopePeak, min_db_value);
     
     // GMM + AIC -----------------------------------
     arma::gmm_diag model_Rms{GMM_AIC(rmsdb, 7)};
@@ -132,9 +101,9 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     //==================================================
     
     double start;
-    std::list< std::vector<int> > transient_list;
+    std::vector< std::array<int,2> > transient_vector;
     
-    transient_list = microdynamics(envelopeRms, envelopeRms_slow, rms_length, rms_length_slow, overlap, 1, -1, start);
+    transient_vector = microdynamics(envelopeRms, envelopeRms_slow, rms_length, rms_length_slow, overlap, 1, -1, start);
     
     //==================================================
     // gate timing computations [Tr and Th] -- using PEAK ENVELOPE
@@ -144,34 +113,31 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     int offset = 1; // ..
     
     //create transient list positive[ascendent] and transient list negative[descendent]
-    std::list< std::vector<int> > transient_list_ascendent;
-    std::list< std::vector<int> > transient_list_descendent;
+    std::vector< std::array<int,2> > transient_vector_ascendent;
+    std::vector< std::array<int,2> > transient_vector_descendent;
     
-    for ( std::vector<int> l : transient_list)
+    for ( std::array<int,2> l : transient_vector)
     {
         if ( l[1] == 1 )
-            transient_list_ascendent.push_back(l);
+            transient_vector_ascendent.push_back(l);
         else if ( l[1] == -1 )
-            transient_list_descendent.push_back(l);
+            transient_vector_descendent.push_back(l);
     }
     
     //event discriminator btw main event and spill event -- INDEXes CORRESPOND TO RMS FAST OR PEAK ENVELOPE
-    std::list< std::vector<int> > main_event_list; // [ [index_event_start, index_event_end] , ... ]
-    std::list< std::vector<int> > spill_event_list; // [ [index_event_start, index_event_end] , ... ]
-    std::list< std::vector<int> > event_list; // [ [index_event_start, index_event_end, label] , ... ] // label==1 [main]     label==0 [spill]
+    std::vector< std::array<int,2> >main_event_vector; // [ [index_event_start, index_event_end] , ... ]
+    std::vector< std::array<int,2> > spill_event_vector; // [ [index_event_start, index_event_end] , ... ]
+    std::vector< std::array<int,3> > event_vector; // [ [index_event_start, index_event_end, label] , ... ] // label==1 [main]     label==0 [spill]
     
     // transient_list_ascendent.size should be even. iter transient_list_ascendent till the second to last element.
-    std::list<std::vector<int>>::iterator iter;
     int begin_event_index, end_event_index;
-    std::vector<int> peak_event_indexes(2);
-    std::vector<int> peak_event_indexes_withlabel(3);
+    std::array<int,2> peak_event_indexes;
+    std::array<int,3> peak_event_indexes_withlabel;
     
-    for ( iter = transient_list_ascendent.begin(); iter != std::prev(transient_list_ascendent.end()); iter++)
+    for ( std::vector< std::array<int,2> >::iterator iter = transient_vector_ascendent.begin(); iter != std::prev(transient_vector_ascendent.end()); iter++)
     {
         begin_event_index = start + (*iter)[0] - offset; //start + cause index are referred to rms slow
-        iter++; //cause it is a biderectional iterator
-        end_event_index = start + (*iter)[0] - offset;
-        iter--;
+        end_event_index = start + ( *(iter+1) )[0] - offset;
         // ..
         peak_event_indexes[0] = begin_event_index;
         peak_event_indexes[1] = end_event_index;
@@ -182,18 +148,18 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
         // if event max > gate threshold (=> main)
         if ( envelopePeak.envelope(arma::span( begin_event_index, end_event_index )).max() > gate_threshold )
         {
-            main_event_list.push_back(peak_event_indexes);
+            main_event_vector.push_back(peak_event_indexes);
             
             peak_event_indexes_withlabel[2] = 1;
-            event_list.push_back(peak_event_indexes_withlabel);
+            event_vector.push_back(peak_event_indexes_withlabel);
         }
         // if event max < gate threshold (=> spill)
         else if ( envelopePeak.envelope(arma::span( begin_event_index, end_event_index )).max() < gate_threshold )
         {
-            spill_event_list.push_back(peak_event_indexes);
+            spill_event_vector.push_back(peak_event_indexes);
             
             peak_event_indexes_withlabel[2] = 0;
-            event_list.push_back(peak_event_indexes_withlabel);
+            event_vector.push_back(peak_event_indexes_withlabel);
         }
     }
     
@@ -204,7 +170,7 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     double time_start_main, time_start_spill;
     double Ioi_main_spill_mean;
     
-    for ( iter = event_list.begin(); iter != std::prev(event_list.end()); iter++ )
+    for ( std::vector<std::array<int,3>>::iterator iter = event_vector.begin(); iter != std::prev(event_vector.end()); iter++ )
     {
         // if current event is main and next is spill
         //        std::cout << (*iter)[2] << std::endl;
@@ -241,7 +207,7 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     int counter_row_hold = 0;
     int counter_row_attack = 0;
     
-    for ( iter = main_event_list.begin(); iter != main_event_list.end(); iter++)
+    for ( std::vector<std::array<int,2>>::iterator iter = main_event_vector.begin(); iter != main_event_vector.end(); iter++)
     {
         envelop_one_event = envelopePeak.envelope( arma::span( (*iter)[0], (*iter)[1] ) );
         
@@ -307,75 +273,33 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
 
 
 
-
 //====================================================================================================
 // VOICE COMPRESSOR SMART PRESET
 //====================================================================================================
+constexpr double release_Dbrange_transient = 10;
+constexpr double attack_Dbrange_transient = 7;
+constexpr double MaxTimeDecay = 0.08;
+constexpr double MaxTimeAttack = 0.03;
 
 std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
 {
     std::map<std::string, double> m;
     
-    double release_Dbrange_transient = 10;
-    double attack_Dbrange_transient = 7;
-    double MaxTimeDecay = 0.08;
-    double MaxTimeAttack = 0.03;
-    
     //==================================================
     // ENVELOPE COMPUTATION
     //==================================================
-    // envelop settings
-    double rms_length = 10;
-    double overlap = 0.8;
-    // rms slow settings
-    double rms_length_slow = 200;
-    double step = rms_length * (1 - overlap); //hop size
-    double overlap_slow = ((rms_length * (1 - overlap)) - rms_length_slow) / (- rms_length_slow);
-    // envelope struct declaration
+
     envelope_type envelopeRms, envelopePeak, envelopeRms_slow;
-    
     envelopeRms = Envelope(inSignal, _fs, rms_length, overlap, "rms"); //rms fast
     envelopeRms_slow = Envelope(inSignal, _fs, rms_length_slow, overlap_slow, "rms"); //rms slow
-    
-    //    envelopeRms_slow.envelope.print();
-    
     envelopePeak = Envelope(inSignal, _fs, rms_length, overlap, "peak");
     
     //==================================================
     // GMM + AIC [peak and rms]
     //==================================================
     //data as arma::mat. each col is an element. //deleate the element below -100 db. or sub setting. silence!
-    // counting number of silence elements
-    
-    int N_silence_elem_rms = 0;
-    int N_silence_elem_peak = 0;
-    arma::vec::iterator ptr_vec;
-    
-    for (ptr_vec = envelopeRms.envelope.begin() ; ptr_vec != envelopeRms.envelope.end() ; ptr_vec++)
-        if ( *ptr_vec < -100 )
-            N_silence_elem_rms++;
-    
-    for (ptr_vec = envelopePeak.envelope.begin() ; ptr_vec != envelopePeak.envelope.end() ; ptr_vec++)
-        if ( *ptr_vec < -100 )
-            N_silence_elem_peak++;
-    
-    // vector for gmm modelling RMS --------
-    arma::mat rmsdb(1, envelopeRms.envelope.size() - N_silence_elem_rms );
-    for (arma::mat::iterator ptr_mat = rmsdb.begin(), ptr_vec = envelopeRms.envelope.begin(); ptr_mat != rmsdb.end() && ptr_vec != envelopeRms.envelope.end(); ptr_vec++ ){
-        if ( *ptr_vec > -100 ){
-            *ptr_mat = *ptr_vec;
-            ptr_mat++;
-        }
-    }
-    
-    // vector for gmm modelling Peak --------
-    arma::mat peak_db(1, envelopePeak.envelope.size() - N_silence_elem_peak );
-    for (arma::mat::iterator ptr_mat = peak_db.begin(), ptr_vec = envelopePeak.envelope.begin(); ptr_mat != peak_db.end() && ptr_vec != envelopePeak.envelope.end(); ptr_vec++ ){
-        if ( *ptr_vec > -100 ){
-            *ptr_mat = *ptr_vec;
-            ptr_mat++;
-        }
-    }
+    arma::mat rmsdb = ReduceDynamicRange(envelopeRms, min_db_value);
+    arma::mat peak_db = ReduceDynamicRange(envelopePeak, min_db_value);
     
     // GMM + AIC -----------------------------------
     arma::gmm_diag model_Rms{GMM_AIC(rmsdb, 7)};
@@ -400,9 +324,9 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     // compressor threshold
     //==================================================
     
-    double ratio = COMP_RATIO;
-    double MaxLevel_rms = getPercentile(model_Rms, 0.998, -100, 0, 1000);
-    double MaxLevel_peak = getPercentile(model_Peak, 0.998, -100, 0, 1000);
+    double ratio = 1.0/2.0;
+    double MaxLevel_rms = getPercentile(model_Rms, 0.998, min_db_value, max_db_value, n_db_pointsInRange);
+    double MaxLevel_peak = getPercentile(model_Peak, 0.998, min_db_value, max_db_value, n_db_pointsInRange);
     
     /*
      the voice db range is considered to be 30 db thus [MaxLevel_rms, MaxLevel_rms - 30].
@@ -415,15 +339,11 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     arma::uvec index_loud_gaussian = arma::find( model_Rms.means == model_Rms.means.elem(index_not_veryloud).max() );
     
     // value that the process could reach in db
-    arma::vec x{arma::linspace<arma::vec>(-100, 0, 1000)}; // 1000 elements, step 0.1 db
-    //  pdf single gaussian calculation
-    arma::vec pdf_loud_gaussian{pdf( model_Rms.means[index_loud_gaussian[0]] , model_Rms.dcovs[index_loud_gaussian[0]], x)};
-    // cdf
-    arma::vec cdf_loud_gaussian{ cdf(pdf_loud_gaussian) };
-    // percentile computation
-    arma::uvec indexes = arma::find( cdf_loud_gaussian < 0.99 );  //value for which p(X<gate_thershold)<0.98
+    arma::vec x{arma::linspace<arma::vec>(min_db_value, max_db_value, n_db_pointsInRange)}; // 1000 elements, step 0.1 db
     
-    double MaxAfterComp = x[ indexes.max() ];
+    //value for which p(X<gate_thershold)<0.98
+    double MaxAfterComp = getGausPercentile(0.99, model_Rms.means[index_loud_gaussian[0]], model_Rms.dcovs[index_loud_gaussian[0]], x);
+    
     double threshold = (MaxAfterComp - MaxLevel_rms * ratio) / (1 - ratio);
     double MakeUPgain = MaxLevel_rms - MaxAfterComp;
     
@@ -438,9 +358,9 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     
     //================================================== microdynamics
     double start;
-    std::list< std::vector<int> > transient_list;
+    std::vector< std::array<int,2> > transient_vector;
     
-    transient_list = microdynamics(envelopeRms, envelopeRms_slow, rms_length, rms_length_slow, overlap, 1, -1, start);
+    transient_vector = microdynamics(envelopeRms, envelopeRms_slow, rms_length, rms_length_slow, overlap, 1, -1, start);
     
     //================================================== transient evaluation
     arma::vec Trelease_vector , Tattack_vector;
@@ -458,7 +378,7 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     double end_event_rms_value; // rms value where the decay start
     double Dbrange_transient_release;
     
-    for ( std::vector<int> l : transient_list)
+    for ( std::array<int,2> l : transient_vector)
     {
         if ( l[1] == 1 ) // == 1 [ascendent]
         {
