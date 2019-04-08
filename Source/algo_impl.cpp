@@ -21,6 +21,8 @@ constexpr double rms_length_slow = 200; // ms
 constexpr double step = rms_length * (1 - overlap); //hop size [ms]
 constexpr double overlap_slow = ((rms_length * (1 - overlap)) - rms_length_slow) / (- rms_length_slow);
 
+constexpr double hysteresis_dbRange= 1;
+
 
 //====================================================================================================
 // SNARE / KICK GATE AND COMPRESSOR SMART PRESET
@@ -30,7 +32,6 @@ constexpr double overlap_slow = ((rms_length * (1 - overlap)) - rms_length_slow)
 constexpr double ratio_snare_kick = 1.0/3.0;
 constexpr double db_decay_holdAndRelease = 30;
 constexpr double db_decay_attack = 10;
-constexpr double hysteresis_dbRange= 1;
 constexpr double threshold_offset = 30;
 
 /**
@@ -109,7 +110,7 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     
     //================================================== Th and Tr gate
     double Th_gate = arma::mean(Thold_vector);
-    double Tr_gate = Ioi_main_spill_mean * 1e3 - Th_gate;
+    double Tr_gate = Ioi_main_spill_mean * 1e3 - Th_gate; // * 1e3 cause Ioi_main_spill_mean is in seconds
     
     //================================================== COMPRESSION SETTINGS
     double Tr_compressor = Th_gate;
@@ -162,7 +163,8 @@ double _GateThreshold(arma::gmm_diag &model)
 
 void _EventLabelling(std::vector< std::array<int,2> > &transient_vector, double gate_threshold, double start, envelope_type &envelopePeak, std::vector< std::array<int,2> > &main_event_vector, std::vector< std::array<int,2> > &spill_event_vector, std::vector< std::array<int,3> > &event_vector)
 {
-    int offset = 1; // ..
+    constexpr int MainLabel = 1, SpillLabel = 0;
+    int offset = 1; // how many samples before the transient detection i consider the event startiong
     
     //create transient list positive[ascendent] and transient list negative[descendent]
     std::vector< std::array<int,2> > transient_vector_ascendent;
@@ -186,10 +188,9 @@ void _EventLabelling(std::vector< std::array<int,2> > &transient_vector, double 
     {
         begin_event_index = start + (*iter)[0] - offset; //start + cause index are referred to rms slow
         end_event_index = start + ( *(iter+1) )[0] - offset;
-        // ..
+        // array filling before being pushed in vector
         peak_event_indexes[0] = begin_event_index;
         peak_event_indexes[1] = end_event_index;
-        // ..
         peak_event_indexes_withlabel[0] = begin_event_index;
         peak_event_indexes_withlabel[1] = end_event_index;
         
@@ -197,16 +198,14 @@ void _EventLabelling(std::vector< std::array<int,2> > &transient_vector, double 
         if ( envelopePeak.envelope(arma::span( begin_event_index, end_event_index )).max() > gate_threshold )
         {
             main_event_vector.push_back(peak_event_indexes);
-            
-            peak_event_indexes_withlabel[2] = 1;
+            peak_event_indexes_withlabel[2] = MainLabel;
             event_vector.push_back(peak_event_indexes_withlabel);
         }
         // if event max < gate threshold (=> spill)
         else if ( envelopePeak.envelope(arma::span( begin_event_index, end_event_index )).max() < gate_threshold )
         {
             spill_event_vector.push_back(peak_event_indexes);
-            
-            peak_event_indexes_withlabel[2] = 0;
+            peak_event_indexes_withlabel[2] = SpillLabel;
             event_vector.push_back(peak_event_indexes_withlabel);
         }
     }
@@ -316,7 +315,7 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
      */
     
     // find first gaussian in with loud label
-    arma::uvec index_not_veryloud = arma::find( model_Rms.means < MaxLevel_rms - 30/4 );
+    arma::uvec index_not_veryloud = arma::find( model_Rms.means < MaxLevel_rms - 30.0/4.0 );
     arma::uvec index_loud_gaussian = arma::find( model_Rms.means == model_Rms.means.elem(index_not_veryloud).max() );
     
     // value that the process could reach in db
@@ -339,32 +338,43 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     double start;
     std::vector< std::array<int,2> > transient_vector;
     
-    transient_vector = microdynamics(envelopeRms, envelopeRms_slow, rms_length, rms_length_slow, overlap, 1, -1, start);
+    transient_vector = microdynamics(envelopeRms, envelopeRms_slow, rms_length, rms_length_slow, overlap, hysteresis_dbRange, -hysteresis_dbRange, start);
     
     //================================================== transient evaluation
     arma::vec Trelease_vector , Tattack_vector;
     _transientEvaluation(transient_vector, envelopeRms, envelopeRms_slow, Trelease_vector, Tattack_vector, start);
  
     //================================================== Tattack_vector and Trelease_vector statistics and chosing criteria
-
-    //control when Trelease_vector.size() very low
-    // ..
+    double Tr = 0, Ta = 0;
     
-    arma::mat Trelease_vector_ms { Trelease_vector * 1000 }; // *1000 for [ms]
-    Trelease_vector_ms = Trelease_vector_ms.t();
-    arma::mat Tattack_vector_ms { Tattack_vector * 1000 }; // *1000 for [ms]
-    Tattack_vector_ms = Tattack_vector_ms.t();
+    //control when Trelease_vector.size()/Tattack_vector.size() very low => not possible to compute GMM
+    if ( Trelease_vector.size() > 1 )
+    {
+        arma::mat Trelease_vector_ms { Trelease_vector * 1000 }; // *1000 for [ms] conversion
+        Trelease_vector_ms = Trelease_vector_ms.t();
+        arma::gmm_diag model_Trelease{ GMM_AIC(Trelease_vector_ms, 4) };
+        // selection criteria
+        Tr = getPercentile(model_Trelease, 0.5, 0, 200, 1000);
+        Tr = Tr * 2; // cause i want to measure t20 and i approximate t20 = t10 * 2 in order to have more data
+    }
+    else
+    {
+        Tr = arma::mean(Trelease_vector);
+    }
     
-    arma::gmm_diag model_Trelease{ GMM_AIC(Trelease_vector_ms, 4) };
-    arma::gmm_diag model_Tattack{ GMM_AIC(Tattack_vector_ms, 4) };
-    
-    // selection criteria
-    // ..
-    
-    double Tr = getPercentile(model_Trelease, 0.5, 0, 200, 1000);
-    double Ta = getPercentile(model_Tattack, 0.5, 0, 100, 500);
-    // ..
-    Tr = Tr * 2; // cause i want to measure t20 and i approximate t20 = t10 * 2 in order to have more data
+    //control when Trelease_vector.size()/Tattack_vector.size() very low => not possible to compute GMM
+    if ( Tattack_vector.size() > 1 )
+    {
+        arma::mat Tattack_vector_ms { Tattack_vector * 1000 }; // *1000 for [ms] conversion
+        Tattack_vector_ms = Tattack_vector_ms.t();
+        arma::gmm_diag model_Tattack{ GMM_AIC(Tattack_vector_ms, 4) };
+        // selection criteria
+        Ta = getPercentile(model_Tattack, 0.5, 0, 100, 500);
+    }
+    else
+    {
+        Ta = arma::mean(Tattack_vector);
+    }
     
     //fill map
     m.insert(std::pair<std::string, double>("comp_threshold", threshold));
@@ -395,7 +405,7 @@ void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, e
     
     for ( std::array<int,2> l : transient_vector)
     {
-        if ( l[1] == 1 ) // == 1 [ascendent]
+        if ( l[1] == 1 ) // == 1 [rising]
         {
             start_event_rms_value = envelopeRms.envelope[ start + l[0] ];
             Dbrange_transient_attack = start_event_rms_value - attack_Dbrange_transient;
@@ -414,7 +424,7 @@ void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, e
             }
             
         }
-        else if ( l[1] == -1 ) // ==-1 [descendent]
+        else if ( l[1] == -1 ) // == -1 [descendent]
         {
             end_event_rms_value = envelopeRms.envelope[ start + l[0] ];
             Dbrange_transient_release = end_event_rms_value - release_Dbrange_transient;

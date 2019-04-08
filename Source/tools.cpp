@@ -160,53 +160,54 @@ arma::mat ReduceDynamicRange(envelope_type &envelope , const double min_value )
 }
 
 //================================================
-// MICRODYNAMICS // transient event list [[index in rms fast, type event], ..]  type event: ascendent[1]/descendent[-1]
+// MICRODYNAMICS // transient event list [[index in rms fast, type event], ..]  type event: rising[1]/descendent[-1]
 //================================================
 std::vector< std::array<int,2> > microdynamics(envelope_type &envelope_rms_fast, envelope_type &envelope_rms_slow, double rms_fast_length, double rms_slow_length, double overlap_rms_fast, int hystereisi_high_threshold, int hystereisi_low_threshold, double &start)
 {
+    constexpr int below_threshold = -1, above_threshold = 1;
+    constexpr int descendent_transient = -1, rising_transient = 1;
     std::vector< std::array<int,2> > transient_vector;
     // first sample of rms_slow is later that rms_fas cause bigger window
     start = std::round( (rms_slow_length/2 - rms_fast_length/2) / (rms_fast_length * (1 - overlap_rms_fast)) );
     
-    // rms_fast - rms_slow
-    arma::vec DiffRms{ envelope_rms_fast.envelope(arma::span(start, envelope_rms_slow.envelope.size()-1+start)) - envelope_rms_slow.envelope };
+    arma::vec DiffRms{ envelope_rms_fast.envelope(arma::span(start, envelope_rms_slow.envelope.size()-1+start)) - envelope_rms_slow.envelope }; // rms_fast - rms_slow
     
     //flag variables
-    int dep = 0; // 0: below threshold         1: above threshold
+    int dep = above_threshold; // -1: below threshold         1: above threshold
     //set flag variable
     if ( DiffRms[0] < 0 )
-        dep = -1;
-    // transient event [index in rms fast, type event]  type event: ascendent[1]/descendent[-1]
+        dep = below_threshold;
+    // transient event [index in rms fast, type event]  type event: rising[1]/descendent[-1]
     std::array<int,2> transient;
     
     
     //================================================ iteration among DiffRms values
-    int i=0;
-//    for(auto& diff : DiffRms)
-    for ( arma::vec::iterator ptr_DiffRms=DiffRms.begin(); ptr_DiffRms<DiffRms.end(); i++, ptr_DiffRms++ ) //TOO CONVOLUTED!
+    int sample_counter = 0; // sample counter
+    
+    //    for ( arma::vec::iterator ptr_DiffRms=DiffRms.begin(); ptr_DiffRms<DiffRms.end(); ptr_DiffRms++ ) //TOO CONVOLUTED!
+    for(auto& elem_DiffRms : DiffRms)
     {
-        if ( *ptr_DiffRms < hystereisi_low_threshold ) //descending
+        if ( elem_DiffRms < hystereisi_low_threshold ) //descending
         {
-            if (dep == 1)
+            if (dep == above_threshold) // previous state
             {
-                transient[0] = i - 1 ; // - 1 cause i want to catch the transient the sample before happening  // CAREFULL FOR BUGS !!
-                transient[1] = -1;
+                transient[0] = sample_counter - 1 ; // - 1 cause i want to catch the transient the sample before happening [like in python]
+                transient[1] = descendent_transient;
                 transient_vector.push_back(transient);
             }
-            //end processing
-            dep = -1;
+            dep = below_threshold; // update state
         }
-        else if ( *ptr_DiffRms > hystereisi_high_threshold ) // ascending
+        else if ( elem_DiffRms > hystereisi_high_threshold ) // ascending
         {
-            if (dep == -1)
+            if (dep == below_threshold) // previous state
             {
-                transient[0] = i - 1; // - 1 cause i want to catch the transient the sample before happening
-                transient[1] = 1;
+                transient[0] = sample_counter - 1; // - 1 cause i want to catch the transient the sample before happening [like in python]
+                transient[1] = rising_transient;
                 transient_vector.push_back(transient);
             }
-            //end processing
-            dep = 1;
+            dep = above_threshold; // update state
         }
+        sample_counter++;
     }
     
     
@@ -221,8 +222,6 @@ arma::vec pdf( double mean, double variance, arma::vec &x)
     arma::vec pdf(x.size());
     
     for (int i=0; i<x.size(); i++){
-        //        double  coeff = (1/(std::sqrt(2 * arma::datum::pi * variance)));
-        //        double indip = std::pow((x(i) - mean) , 2);
         pdf(i) = (1/(std::sqrt(2 * arma::datum::pi * variance))) * std::exp( - std::pow((x(i) - mean) , 2) / (2 * variance) );
     }
     
@@ -306,7 +305,7 @@ double getPercentile(arma::gmm_diag model, double percentile, double sample_spac
 // Schroder_BackwardIntegration
 // NOTE: some modification are needed if this has to be a general function
 // NOTE: index schereder integration sligthly different that python
-// time decay computation: NOT T60
+// time decay computation: not according definition [eg. T20 = variation of 60 db but with fit with 20 db]
 //================================================
 double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double tx)
 {
@@ -359,7 +358,7 @@ double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double
             // linear fitting
             Pfit = linearFit( time(arma::span(start_index,end_index)), schroder_integration(arma::span(start_index,end_index)) );
             
-            // time decay computation: NOT T60
+            // time decay computation
             Tx = - tx / Pfit[0];
         }
     }

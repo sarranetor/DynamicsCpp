@@ -18,7 +18,6 @@
 #include "armadillo"
 
 #include "tools.hpp"
-
 #endif /* algo_impl_hpp */
 
 
@@ -32,6 +31,9 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
  compressor melodic smart preset
  **/
 std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs);
+
+
+
 
 // other instruments
 // ..
