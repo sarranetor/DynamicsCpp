@@ -33,8 +33,14 @@ int main (int argc, char* argv[])
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/MoosSnareTop1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/CommitmentSnareTop1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/KillerQueen1.wav");
-    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/FunnyValentines1.wav");
+//    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/FunnyValentines1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/DunningKruger1_10s.wav");
+    
+    std::string track = "neckdeep_10s.wav";
+    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/" + track);
+    
+//    std::string track = "traffiker2.wav";
+//    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/" + track);
     
     std::vector<double> _inSignal;
     double _fs;

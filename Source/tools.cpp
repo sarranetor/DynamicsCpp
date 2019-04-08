@@ -172,11 +172,11 @@ std::vector< std::array<int,2> > microdynamics(envelope_type &envelope_rms_fast,
     
     arma::vec DiffRms{ envelope_rms_fast.envelope(arma::span(start, envelope_rms_slow.envelope.size()-1+start)) - envelope_rms_slow.envelope }; // rms_fast - rms_slow
     
-    //flag variables
-    int dep = above_threshold; // -1: below threshold         1: above threshold
-    //set flag variable
-    if ( DiffRms[0] < 0 )
-        dep = below_threshold;
+//    int state = above_threshold; // -1: below threshold         1: above threshold
+    //set state variable
+//    if ( DiffRms[0] <= 0 )
+//        state = below_threshold;
+    int state = 0; //undefined
     // transient event [index in rms fast, type event]  type event: rising[1]/descendent[-1]
     std::array<int,2> transient;
     
@@ -189,23 +189,23 @@ std::vector< std::array<int,2> > microdynamics(envelope_type &envelope_rms_fast,
     {
         if ( elem_DiffRms < hystereisi_low_threshold ) //descending
         {
-            if (dep == above_threshold) // previous state
+            if (state == above_threshold) // previous state
             {
                 transient[0] = sample_counter - 1 ; // - 1 cause i want to catch the transient the sample before happening [like in python]
                 transient[1] = descendent_transient;
                 transient_vector.push_back(transient);
             }
-            dep = below_threshold; // update state
+            state = below_threshold; // update state
         }
         else if ( elem_DiffRms > hystereisi_high_threshold ) // ascending
         {
-            if (dep == below_threshold) // previous state
+            if (state == below_threshold) // previous state
             {
                 transient[0] = sample_counter - 1; // - 1 cause i want to catch the transient the sample before happening [like in python]
                 transient[1] = rising_transient;
                 transient_vector.push_back(transient);
             }
-            dep = above_threshold; // update state
+            state = above_threshold; // update state
         }
         sample_counter++;
     }

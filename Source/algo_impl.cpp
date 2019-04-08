@@ -291,6 +291,7 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     //================================================== ENVELOPE COMPUTATION
     envelope_type envelopeRms, envelopePeak, envelopeRms_slow;
     envelopeRms = Envelope(inSignal, _fs, rms_length, overlap, "rms"); //rms fast
+//    envelopeRms.envelope.print();
     envelopeRms_slow = Envelope(inSignal, _fs, rms_length_slow, overlap_slow, "rms"); //rms slow
     envelopePeak = Envelope(inSignal, _fs, rms_length, overlap, "peak");
     
@@ -413,16 +414,18 @@ void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, e
             // index where the signal goes to Dbrange_transient_release. first index.
             arma::uvec index = arma::find(  envelopeRms.envelope(arma::span(0, start + l[0])) < Dbrange_transient_attack );
             
-            attack_time = envelopeRms.time[start + l[0]] - envelopeRms.time[ *(index.end()-1) ];
-            
-            // the attack time is considered only if is less that a max
-            if ( attack_time <= MaxTimeAttack )
+            if ( index.size() > 0 )
             {
-                arma::rowvec row { attack_time };
-                Tattack_vector.insert_rows(counter_row_attack, row);
-                counter_row_attack++; // increase row counter
+                // start +, cause the transient index refers to the Diff btw fast and slow. but the envelopeRms.time[start] = envelopeRms_slow.time[0]
+                attack_time = envelopeRms.time[start + l[0]] - envelopeRms.time[ *(index.end()-1) ];
+                // the attack time is considered only if is less that a max
+                if ( attack_time <= MaxTimeAttack )
+                {
+                    arma::rowvec row { attack_time };
+                    Tattack_vector.insert_rows(counter_row_attack, row);
+                    counter_row_attack++; // increase row counter
+                }
             }
-            
         }
         else if ( l[1] == -1 ) // == -1 [descendent]
         {
@@ -432,16 +435,23 @@ void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, e
             // index where the signal goes to Dbrange_transient_release. first index.
             arma::uvec index = arma::find(  envelopeRms.envelope(arma::span(start + l[0], end_index)) < Dbrange_transient_release );
             
-            // start +, cause the transient index refers to the Diff btw fast and slow. but the envelopeRms.time[start] = envelopeRms_slow.time[0]
-            decay_time = envelopeRms.time[ start + l[0] + index[0]] - envelopeRms.time[start + l[0]];
-            
-            // the decay time is considered only if is less that a max
-            if ( decay_time <= MaxTimeDecay)
+            if ( index.size() > 0 )
             {
-                arma::rowvec row { decay_time };
-                Trelease_vector.insert_rows(counter_row_release, row);
-                counter_row_release++; // increase row counter
+                // start +, cause the transient index refers to the Diff btw fast and slow. but the envelopeRms.time[start] = envelopeRms_slow.time[0]
+                decay_time = envelopeRms.time[ start + l[0] + index[0]] - envelopeRms.time[start + l[0]];
+                // the decay time is considered only if is less that a max
+                if ( decay_time <= MaxTimeDecay)
+                {
+                    arma::rowvec row { decay_time };
+                    Trelease_vector.insert_rows(counter_row_release, row);
+                    counter_row_release++; // increase row counter
+                }
             }
         }
     }
+    
+    std::cout << "release" << std::endl;
+    Trelease_vector.print();
+    std::cout << "attack" << std::endl;
+    Tattack_vector.print();
 }
