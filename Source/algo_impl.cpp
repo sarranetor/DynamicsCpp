@@ -291,7 +291,6 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     //================================================== ENVELOPE COMPUTATION
     envelope_type envelopeRms, envelopePeak, envelopeRms_slow;
     envelopeRms = Envelope(inSignal, _fs, rms_length, overlap, "rms"); //rms fast
-//    envelopeRms.envelope.print();
     envelopeRms_slow = Envelope(inSignal, _fs, rms_length_slow, overlap_slow, "rms"); //rms slow
     envelopePeak = Envelope(inSignal, _fs, rms_length, overlap, "peak");
     
@@ -349,7 +348,7 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     double Tr = 0, Ta = 0;
     
     //control when Trelease_vector.size()/Tattack_vector.size() very low => not possible to compute GMM
-    if ( Trelease_vector.size() > 1 )
+    if ( Trelease_vector.size() > 4 )
     {
         arma::mat Trelease_vector_ms { Trelease_vector * 1000 }; // *1000 for [ms] conversion
         Trelease_vector_ms = Trelease_vector_ms.t();
@@ -360,11 +359,11 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     }
     else
     {
-        Tr = arma::mean(Trelease_vector);
+        Tr = arma::mean(Trelease_vector) * 1000; // *1000 for [ms] conversion
     }
     
     //control when Trelease_vector.size()/Tattack_vector.size() very low => not possible to compute GMM
-    if ( Tattack_vector.size() > 1 )
+    if ( Tattack_vector.size() > 4 )
     {
         arma::mat Tattack_vector_ms { Tattack_vector * 1000 }; // *1000 for [ms] conversion
         Tattack_vector_ms = Tattack_vector_ms.t();
@@ -374,7 +373,7 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     }
     else
     {
-        Ta = arma::mean(Tattack_vector);
+        Ta = arma::mean(Tattack_vector) * 1000; // *1000 for [ms] conversion
     }
     
     //fill map
@@ -406,7 +405,7 @@ void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, e
     
     for ( std::array<int,2> l : transient_vector)
     {
-        if ( l[1] == 1 ) // == 1 [rising]
+        if ( l[1] == 1 ) // == 1 [rising transient]
         {
             start_event_rms_value = envelopeRms.envelope[ start + l[0] ];
             Dbrange_transient_attack = start_event_rms_value - attack_Dbrange_transient;
@@ -427,7 +426,7 @@ void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, e
                 }
             }
         }
-        else if ( l[1] == -1 ) // == -1 [descendent]
+        else if ( l[1] == -1 ) // == -1 [descendent transient]
         {
             end_event_rms_value = envelopeRms.envelope[ start + l[0] ];
             Dbrange_transient_release = end_event_rms_value - release_Dbrange_transient;
@@ -449,9 +448,4 @@ void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, e
             }
         }
     }
-    
-    std::cout << "release" << std::endl;
-    Trelease_vector.print();
-    std::cout << "attack" << std::endl;
-    Tattack_vector.print();
 }

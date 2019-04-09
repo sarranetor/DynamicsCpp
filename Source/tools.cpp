@@ -112,7 +112,6 @@ envelope_type Envelope(arma::vec &x, const double &fs, const double &rms_length,
     {
         windowEnvCalculation = RmsValue;
     }
-        
     
     arma::vec::iterator ptr_env, ptr_time;
     //inizialise iterators
@@ -168,15 +167,11 @@ std::vector< std::array<int,2> > microdynamics(envelope_type &envelope_rms_fast,
     constexpr int descendent_transient = -1, rising_transient = 1;
     std::vector< std::array<int,2> > transient_vector;
     // first sample of rms_slow is later that rms_fas cause bigger window
-    start = std::round( (rms_slow_length/2 - rms_fast_length/2) / (rms_fast_length * (1 - overlap_rms_fast)) );
+    start = std::floor( (rms_slow_length/2 - rms_fast_length/2) / (rms_fast_length * (1 - overlap_rms_fast)) );
     
-    arma::vec DiffRms{ envelope_rms_fast.envelope(arma::span(start, envelope_rms_slow.envelope.size()-1+start)) - envelope_rms_slow.envelope }; // rms_fast - rms_slow
+    arma::vec DiffRms{ envelope_rms_fast.envelope(arma::span(start, envelope_rms_slow.envelope.size() + start - 1) ) - envelope_rms_slow.envelope }; // rms_fast - rms_slow. // -1 cause ..
     
-//    int state = above_threshold; // -1: below threshold         1: above threshold
-    //set state variable
-//    if ( DiffRms[0] <= 0 )
-//        state = below_threshold;
-    int state = 0; //undefined
+    int state = 0; //undefined, the state is gonna be defined later
     // transient event [index in rms fast, type event]  type event: rising[1]/descendent[-1]
     std::array<int,2> transient;
     
@@ -184,14 +179,13 @@ std::vector< std::array<int,2> > microdynamics(envelope_type &envelope_rms_fast,
     //================================================ iteration among DiffRms values
     int sample_counter = 0; // sample counter
     
-    //    for ( arma::vec::iterator ptr_DiffRms=DiffRms.begin(); ptr_DiffRms<DiffRms.end(); ptr_DiffRms++ ) //TOO CONVOLUTED!
     for(auto& elem_DiffRms : DiffRms)
     {
         if ( elem_DiffRms < hystereisi_low_threshold ) //descending
         {
             if (state == above_threshold) // previous state
             {
-                transient[0] = sample_counter - 1 ; // - 1 cause i want to catch the transient the sample before happening [like in python]
+                transient[0] = sample_counter - 1; // - 1 cause i want to catch the transient the sample before happening [like in python]
                 transient[1] = descendent_transient;
                 transient_vector.push_back(transient);
             }
@@ -209,7 +203,6 @@ std::vector< std::array<int,2> > microdynamics(envelope_type &envelope_rms_fast,
         }
         sample_counter++;
     }
-    
     
     return transient_vector;
 }

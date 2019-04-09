@@ -36,7 +36,7 @@ int main (int argc, char* argv[])
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/FunnyValentines1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/DunningKruger1_10s.wav");
     
-    std::string track = "neckdeep_10s.wav";
+    std::string track = "FunnyValentines3.wav";
     File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/" + track);
     
 //    std::string track = "traffiker2.wav";
