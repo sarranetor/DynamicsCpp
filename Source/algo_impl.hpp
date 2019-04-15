@@ -23,12 +23,20 @@
 
 /**
  gate and compressor drums smart preset
+ 
+ @return a map with the following keys.
+ gate_threshold, gate_hold, gate_release, compressor_threshold, compressor_ratio, compressor_attack, compressor_release, compressor_gain.
+ their value is {-1} when the algorithm wasn't able to compute the value for some reason.
  **/
 std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_fs);
 
 
 /**
  compressor melodic smart preset
+ 
+ @return a map with the following keys.
+ comp_threshold, comp_ratio, comp_makeupgain, comp_attack, comp_release.
+ their value is {-1} when the algorithm wasn't able to compute the value for some reason.
  **/
 std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs);
 

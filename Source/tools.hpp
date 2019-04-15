@@ -29,11 +29,6 @@ struct envelope_type {
 
 
 /**
-open file wav
- **/
-void open(std::vector<double> &_inSignal, File &file, double &_fs, double &_inSignalLen);
-
-/**
     Computes signal envelope rms or peak.
  
     @param

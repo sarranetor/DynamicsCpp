@@ -32,7 +32,9 @@ constexpr double hysteresis_dbRange= 1;
 constexpr double ratio_snare_kick = 1.0/3.0;
 constexpr double db_decay_holdAndRelease = 30;
 constexpr double db_decay_attack = 10;
-constexpr double threshold_offset = 30;
+constexpr double threshold_offset_kick_snare = 30;
+
+constexpr double Ioi_main_spill_mean_default = 0.4;
 
 /**
     takes the second loudest gaussian of the model and computes a certain percentile and return it.
@@ -67,6 +69,7 @@ arma::vec _decayEvents(std::vector< std::array<int,2> > &main_event_vector, enve
 std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_fs)
 {
     std::map<std::string, double> m;
+    double gate_threshold{-1}, Th_gate{-1}, Tr_gate{-1}, threshold{-1}, ratio{-1}, Ta_compressor{-1}, Tr_compressor{-1}, MakeUPgain{-1};
     
     //================================================== ENVELOPE COMPUTATION
     envelope_type envelopeRms, envelopePeak, envelopeRms_slow;
@@ -75,7 +78,7 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     envelopePeak = Envelope(inSignal, _fs, rms_length, overlap, "peak");
     
     //================================================== GMM + AIC [peak and rms]
-    //data as arma::mat. each col is an element. //deleate the element below -100 db. or sub setting. silence!
+    //data as arma::mat. each col is an element. //deleate the element below min_db_value db. or sub setting. silence!
     arma::mat rmsdb = ReduceDynamicRange(envelopeRms, min_db_value);
     arma::mat peak_db = ReduceDynamicRange(envelopePeak, min_db_value);
     
@@ -84,51 +87,67 @@ std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_
     arma::gmm_diag model_Peak{ GMM_AIC(peak_db, 7) };
     
     //================================================== peak gate threshld
-    double gate_threshold{ _GateThreshold(model_Peak) };
+    gate_threshold = _GateThreshold(model_Peak);
 
     //================================================== microdynamics
     double start;
     std::vector< std::array<int,2> > transient_vector;
     transient_vector = microdynamics(envelopeRms, envelopeRms_slow, rms_length, rms_length_slow, overlap, hysteresis_dbRange, -hysteresis_dbRange, start);
     
-    //================================================== gate timing computations [Tr and Th] -- using PEAK ENVELOPE
-
-    //======Event labelling
-    //event discriminator btw main event and spill event -- INDEXes CORRESPOND TO RMS FAST OR PEAK ENVELOPE
-    std::vector< std::array<int,2> > main_event_vector; // [ [index_event_start, index_event_end] , ... ]
-    std::vector< std::array<int,2> > spill_event_vector; // [ [index_event_start, index_event_end] , ... ]
-    std::vector< std::array<int,3> > event_vector; // [ [index_event_start, index_event_end, label] , ... ] // label==1 [main]     label==0 [spill]
-    
-    _EventLabelling(transient_vector, gate_threshold, start, envelopePeak, main_event_vector, spill_event_vector, event_vector);
-    
-    //================================================== Ioi_main_spill computation
-    double Ioi_main_spill_mean = _Ioi_main_spill_computation(event_vector, envelopePeak);
-    
-    //================================================== schroder integration for decay computation
-    arma::vec Thold_vector = _decayEvents(main_event_vector, envelopePeak,  db_decay_holdAndRelease);
-    arma::vec Tattack_vector = _decayEvents(main_event_vector, envelopePeak,  db_decay_attack);
-    
-    //================================================== Th and Tr gate
-    double Th_gate = arma::mean(Thold_vector);
-    double Tr_gate = Ioi_main_spill_mean * 1e3 - Th_gate; // * 1e3 cause Ioi_main_spill_mean is in seconds
-    
-    //================================================== COMPRESSION SETTINGS
-    double Tr_compressor = Th_gate;
-    double Ta_compressor = arma::mean(Tattack_vector);
-    
-    double MaxLevel_peak = getPercentile(model_Peak, 0.998, min_db_value, max_db_value, n_db_pointsInRange);
-    
-    double threshold = MaxLevel_peak - threshold_offset;
-    double ratio = ratio_snare_kick;
-    
-    double MaxAfterComp = threshold + (MaxLevel_peak-threshold)*ratio;
-    double MakeUPgain = MaxLevel_peak - MaxAfterComp;
-    
-    if ( MakeUPgain > std::abs(MaxLevel_peak) )
+    if ( transient_vector.size() != 0 ) // no transient found
     {
-        MakeUPgain = std::abs(MaxLevel_peak);
+        //================================================== gate timing computations [Tr and Th] -- using PEAK ENVELOPE
+        
+        //======Event labelling: event discriminator btw main event and spill event -- INDEXes CORRESPOND TO RMS FAST OR PEAK ENVELOPE
+        std::vector< std::array<int,2> > main_event_vector; // [ [index_event_start, index_event_end] , ... ]
+        std::vector< std::array<int,2> > spill_event_vector; // [ [index_event_start, index_event_end] , ... ]
+        std::vector< std::array<int,3> > event_vector; // [ [index_event_start, index_event_end, label] , ... ] // label==1 [main]     label==0 [spill]
+        
+        _EventLabelling(transient_vector, gate_threshold, start, envelopePeak, main_event_vector, spill_event_vector, event_vector);
+        
+        if (event_vector.size() != 0 ) // no events found
+        {
+            //================================================== Ioi_main_spill computation
+            double Ioi_main_spill_mean = Ioi_main_spill_mean_default;
+            if ( spill_event_vector.size() != 0 ) // no spill found
+            {
+                Ioi_main_spill_mean = _Ioi_main_spill_computation(event_vector, envelopePeak);
+            }
+            
+            //================================================== schroder integration for decay computation
+            arma::vec Thold_vector = _decayEvents(main_event_vector, envelopePeak,  db_decay_holdAndRelease);
+            arma::vec Tattack_vector = _decayEvents(main_event_vector, envelopePeak,  db_decay_attack);
+            
+            //================================================== Th and Tr gate -- Tr and Ta compressor
+            if( Thold_vector.size() != 0)
+            {
+                Th_gate = arma::mean(Thold_vector);
+                Tr_gate = Ioi_main_spill_mean * 1e3 - Th_gate; // * 1e3 cause Ioi_main_spill_mean is in seconds
+                
+                Tr_compressor = Th_gate;
+            }
+
+            if( Tattack_vector.size() != 0 )
+            {
+                Ta_compressor = arma::mean(Tattack_vector);
+            }
+            
+            //================================================== COMPRESSION SETTINGS
+            double MaxLevel_peak = getPercentile(model_Peak, 0.998, min_db_value, max_db_value, n_db_pointsInRange);
+            
+            threshold = MaxLevel_peak - threshold_offset_kick_snare;
+            ratio = ratio_snare_kick;
+            
+            double  MaxAfterComp = threshold + (MaxLevel_peak-threshold)*ratio;
+            MakeUPgain = MaxLevel_peak - MaxAfterComp;
+            
+            if ( MakeUPgain > std::abs(MaxLevel_peak) )
+            {
+                MakeUPgain = std::abs(MaxLevel_peak);
+            }
+        }
     }
-    
+
     //fill map
     m.insert(std::pair<std::string, double>("gate_threshold", gate_threshold));
     m.insert(std::pair<std::string, double>("gate_hold", Th_gate));
@@ -164,7 +183,7 @@ double _GateThreshold(arma::gmm_diag &model)
 void _EventLabelling(std::vector< std::array<int,2> > &transient_vector, double gate_threshold, double start, envelope_type &envelopePeak, std::vector< std::array<int,2> > &main_event_vector, std::vector< std::array<int,2> > &spill_event_vector, std::vector< std::array<int,3> > &event_vector)
 {
     constexpr int MainLabel = 1, SpillLabel = 0;
-    int offset = 1; // how many samples before the transient detection i consider the event startiong
+    int offset = 1; // how many samples before the transient detection i consider the event starting
     
     //create transient list positive[ascendent] and transient list negative[descendent]
     std::vector< std::array<int,2> > transient_vector_ascendent;
@@ -177,7 +196,6 @@ void _EventLabelling(std::vector< std::array<int,2> > &transient_vector, double 
         else if ( l[1] == -1 )
             transient_vector_descendent.push_back(l);
     }
-
     
     // transient_list_ascendent.size should be even. iter transient_list_ascendent till the second to last element.
     int begin_event_index, end_event_index;
@@ -187,7 +205,7 @@ void _EventLabelling(std::vector< std::array<int,2> > &transient_vector, double 
     for ( std::vector< std::array<int,2> >::iterator iter = transient_vector_ascendent.begin(); iter != std::prev(transient_vector_ascendent.end()); iter++)
     {
         begin_event_index = start + (*iter)[0] - offset; //start + cause index are referred to rms slow
-        end_event_index = start + ( *(iter+1) )[0] - offset;
+        end_event_index = start + ( *(iter+1) )[0] - offset - 1; // -1 cause *(iter+1) is the index of the first element of the next event
         // array filling before being pushed in vector
         peak_event_indexes[0] = begin_event_index;
         peak_event_indexes[1] = end_event_index;
@@ -209,7 +227,6 @@ void _EventLabelling(std::vector< std::array<int,2> > &transient_vector, double 
             event_vector.push_back(peak_event_indexes_withlabel);
         }
     }
-    
 }
 
 
@@ -261,7 +278,6 @@ double _Ioi_main_spill_computation(std::vector<std::array<int,3>> &event_vector,
         }
     }
     
-    //    Ioi_main_spill.print();
     return Ioi_main_spill_mean = arma::mean(Ioi_main_spill);
 }
 
@@ -278,6 +294,8 @@ constexpr double MaxTimeDecay = 0.08;
 constexpr double MaxTimeAttack = 0.03;
 constexpr double ratio_voice = 1.0/2.0;
 
+constexpr double maxAfterComp_offset_voice = 10;
+
 /**
     fills Trelease_vector and Tattack_vector with the time in ms that the transient needed to move of release_Dbrange_transient db and attack_Dbrange_transient db.
  **/
@@ -287,6 +305,7 @@ void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, e
 std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
 {
     std::map<std::string, double> m;
+    double threshold{-1}, ratio{-1}, MakeUPgain{-1}, Ta{-1}, Tr{-1};
     
     //================================================== ENVELOPE COMPUTATION
     envelope_type envelopeRms, envelopePeak, envelopeRms_slow;
@@ -304,7 +323,7 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     arma::gmm_diag model_Peak{GMM_AIC(peak_db, 7)};
     
     //================================================== compressor threshold and makeupgain
-    double ratio = ratio_voice;
+    ratio = ratio_voice;
     double MaxLevel_rms = getPercentile(model_Rms, 0.998, min_db_value, max_db_value, n_db_pointsInRange);
     double MaxLevel_peak = getPercentile(model_Peak, 0.998, min_db_value, max_db_value, n_db_pointsInRange);
     
@@ -316,16 +335,19 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     
     // find first gaussian in with loud label
     arma::uvec index_not_veryloud = arma::find( model_Rms.means < MaxLevel_rms - 30.0/4.0 );
-    arma::uvec index_loud_gaussian = arma::find( model_Rms.means == model_Rms.means.elem(index_not_veryloud).max() );
     
-    // value that the process could reach in db
-    arma::vec x{arma::linspace<arma::vec>(min_db_value, max_db_value, n_db_pointsInRange)}; // 1000 elements, step 0.1 db
+    double MaxAfterComp = MaxLevel_rms - maxAfterComp_offset_voice; //MaxAfterComp offset inizialization
+    if ( index_not_veryloud.size() != 0 ) // if no gaussian below MaxLevel_rms - 30.0/4.0 found
+    {
+        arma::uvec index_loud_gaussian = arma::find( model_Rms.means == model_Rms.means.elem(index_not_veryloud).max() );
+        // value that the process could reach in db
+        arma::vec x{arma::linspace<arma::vec>(min_db_value, max_db_value, n_db_pointsInRange)}; // 1000 elements, step 0.1 db
+        //value for which p(X<gate_thershold)<0.98
+        MaxAfterComp = getGausPercentile(0.99, model_Rms.means[index_loud_gaussian[0]], model_Rms.dcovs[index_loud_gaussian[0]], x);
+    }
     
-    //value for which p(X<gate_thershold)<0.98
-    double MaxAfterComp = getGausPercentile(0.99, model_Rms.means[index_loud_gaussian[0]], model_Rms.dcovs[index_loud_gaussian[0]], x);
-    
-    double threshold = (MaxAfterComp - MaxLevel_rms * ratio) / (1 - ratio);
-    double MakeUPgain = MaxLevel_rms - MaxAfterComp;
+    threshold = (MaxAfterComp - MaxLevel_rms * ratio) / (1 - ratio);
+    MakeUPgain = MaxLevel_rms - MaxAfterComp;
     
     if ( MakeUPgain > std::abs(MaxLevel_peak) )
     {
@@ -345,7 +367,6 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
     _transientEvaluation(transient_vector, envelopeRms, envelopeRms_slow, Trelease_vector, Tattack_vector, start);
  
     //================================================== Tattack_vector and Trelease_vector statistics and chosing criteria
-    double Tr = 0, Ta = 0;
     
     //control when Trelease_vector.size()/Tattack_vector.size() very low => not possible to compute GMM
     if ( Trelease_vector.size() > 4 )
@@ -353,11 +374,12 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
         arma::mat Trelease_vector_ms { Trelease_vector * 1000 }; // *1000 for [ms] conversion
         Trelease_vector_ms = Trelease_vector_ms.t();
         arma::gmm_diag model_Trelease{ GMM_AIC(Trelease_vector_ms, 4) };
+
         // selection criteria
         Tr = getPercentile(model_Trelease, 0.5, 0, 200, 1000);
         Tr = Tr * 2; // cause i want to measure t20 and i approximate t20 = t10 * 2 in order to have more data
     }
-    else
+    else if( Trelease_vector.size() != 0 )
     {
         Tr = arma::mean(Trelease_vector) * 1000; // *1000 for [ms] conversion
     }
@@ -371,7 +393,7 @@ std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
         // selection criteria
         Ta = getPercentile(model_Tattack, 0.5, 0, 100, 500);
     }
-    else
+    else if( Tattack_vector.size() != 0 )
     {
         Ta = arma::mean(Tattack_vector) * 1000; // *1000 for [ms] conversion
     }

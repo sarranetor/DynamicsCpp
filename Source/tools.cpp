@@ -8,41 +8,6 @@
 #include "tools.hpp"
 
 
-//================================================
-// JUCE OPEN A FILE          [audio sample buffer appears to support float only]
-//================================================
-void open(std::vector<double> &_inSignal, File &file, double &_fs, double &_inSignalLen)
-{
-    // deposit buffers: can be preallocated if we know the size
-    AudioBuffer<float> fileBuffer;
-    AudioFormatManager formatManager;
-    
-    //set the formatManager to deal with the various audio formats
-    formatManager.registerBasicFormats();
-    
-    std::unique_ptr<AudioFormatReader> reader(formatManager.createReaderFor (file));
-    
-    _fs = reader->sampleRate;
-    _inSignalLen = reader->lengthInSamples;
-    //give size and fill the vector (still a dynamic operation)
-    _inSignal.resize(_inSignalLen);
-    std::fill(_inSignal.begin(), _inSignal.begin()+_inSignalLen, 0);
-    
-    // set size of AudioBuffer juce class and copy the audio there
-    fileBuffer.setSize (reader->numChannels, (int) reader->lengthInSamples);
-    reader->read (&fileBuffer, 0, _inSignalLen, 0, true, true);
-    
-    //copy the audioBuffer content in std::vec
-    for (int n=0; n<_inSignalLen; ++n)
-        _inSignal[n] = fileBuffer.getSample(0, n);
-    
-    std::cout << std::endl;
-    std::cout << "fs = " << _fs << std::endl;
-    std::cout << "# samples = " << _inSignalLen << std::endl;
-    std::cout << "Upload -> done" << std::endl;
-    
-    reader.reset ();
-}
 
 
 //================================================
@@ -53,25 +18,17 @@ constexpr int EM_iteration = 10;
 arma::gmm_diag GMM_AIC(arma::mat &signal, int N_components)
 {
     arma::gmm_diag model, modelDep; // modelDep deposit variable
-    double overall_likelihood, oldAIC = 1e10, AIC = 0, AICtest = 0;
+    double overall_likelihood, oldAIC = 1e10, AIC = 0;
     
-    for ( int i=1; i<=N_components; i++){
-        
+    for ( int i=1; i<=N_components; i++)
+    {
         modelDep.learn(signal, i, arma::eucl_dist, arma::random_spread, kmean_iteration, EM_iteration, 1e-6, false);
         // per sample average log likehood
         overall_likelihood = modelDep.avg_log_p(signal);
         
-        arma::rowvec eachsample_likelihood = modelDep.log_p(signal);
-        double likehood = arma::sum(eachsample_likelihood);
-        
         // log likehood = per sample average log likehood * N_samples
         // AIC = -2*log likehood + 2*N_modelParam
-        
-        AICtest = -2 * likehood + 2*(modelDep.means.size() + modelDep.dcovs.size() + i - 1);
         AIC = -2 * overall_likelihood * signal.size() + 2*(modelDep.means.size() + modelDep.dcovs.size() + i - 1);
-        
-//        printf("\n iter:%d AIC:%lf", i, AIC);
-        //        printf("\n iter:%d AICtest:%lf", i, AICtest);
         
         if ( AIC < oldAIC ){
             oldAIC = AIC;
@@ -103,7 +60,7 @@ envelope_type Envelope(arma::vec &x, const double &fs, const double &rms_length,
     typedef double (*env_ptr)(double,double,arma::vec&); // pointer to function type double f(double,double)
     env_ptr windowEnvCalculation;
     auto  PeakValue = [] (double start, double end, arma::vec &x) -> double { return arma::abs(x(arma::span(start,end))).max(); };
-    auto  RmsValue = [] (double start, double end, arma::vec &x) -> double {  return sqrt( arma::mean( arma::square( x(arma::span(start,end))))); };
+    auto  RmsValue = [] (double start, double end, arma::vec &x) -> double {  return sqrt( arma::mean( arma::square( x(arma::span(start, end - 1 ))))); };
     if(type=="peak")
     {
         windowEnvCalculation = PeakValue;
@@ -131,7 +88,7 @@ envelope_type Envelope(arma::vec &x, const double &fs, const double &rms_length,
     }
     
     // db transformation
-    envelope.envelope = 20* arma::log10(envelope.envelope + 0.0000001);
+    envelope.envelope = 20 * arma::log10(envelope.envelope + 0.0000001);
     
     return envelope;
 }
@@ -174,7 +131,6 @@ std::vector< std::array<int,2> > microdynamics(envelope_type &envelope_rms_fast,
     int state = 0; //undefined, the state is gonna be defined later
     // transient event [index in rms fast, type event]  type event: rising[1]/descendent[-1]
     std::array<int,2> transient;
-    
     
     //================================================ iteration among DiffRms values
     int sample_counter = 0; // sample counter
@@ -298,7 +254,7 @@ double getPercentile(arma::gmm_diag model, double percentile, double sample_spac
 // Schroder_BackwardIntegration
 // NOTE: some modification are needed if this has to be a general function
 // NOTE: index schereder integration sligthly different that python
-// time decay computation: not according definition [eg. T20 = variation of 60 db but with fit with 20 db]
+// time decay computation: not according definition [eg. T20 = variation of 60 db but with fit computed on 20 db interval]
 //================================================
 double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double tx)
 {
@@ -329,7 +285,6 @@ double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double
             integration_dep = *envelope_iter + integration_dep;
             *schroder_iter = integration_dep;
         }
-        //    schroder_integration.print();
         
         //normalization and Db trasformation
         schroder_integration = schroder_integration / schroder_integration.max();
@@ -341,15 +296,13 @@ double Schroder_BackwardIntegration(arma::vec &envelope, double hop_size, double
         arma::uvec index_start_fitting = arma::find( schroder_integration < - 5 );
         arma::uvec index_end_fitting = arma::find( schroder_integration < - (5 + tx) ); // is gonna be empty if there aren't value below - (5 + tx) => impossible to fit
         
-//        schroder_integration.print();
-        
         //================================================ CONTROL
         if ( index_end_fitting.size() != 0 ) // => possible to fit
         {
-            int start_index = index_start_fitting[0];
-            int end_index = index_end_fitting[0];
+            int start_index = static_cast<int>(index_start_fitting[0]);
+            int end_index = static_cast<int>(index_end_fitting[0]);
             // linear fitting
-            Pfit = linearFit( time(arma::span(start_index,end_index)), schroder_integration(arma::span(start_index,end_index)) );
+            Pfit = linearFit( time(arma::span(start_index ,end_index)), schroder_integration(arma::span(start_index ,end_index)) );
             
             // time decay computation
             Tx = - tx / Pfit[0];
