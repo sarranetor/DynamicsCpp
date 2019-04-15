@@ -23,7 +23,6 @@ constexpr double overlap_slow = ((rms_length * (1 - overlap)) - rms_length_slow)
 
 constexpr double hysteresis_dbRange= 1;
 
-
 //====================================================================================================
 // SNARE / KICK GATE AND COMPRESSOR SMART PRESET
 //====================================================================================================
@@ -65,9 +64,10 @@ double _Ioi_main_spill_computation(std::vector<std::array<int,3>> &event_vector,
  **/
 arma::vec _decayEvents(std::vector< std::array<int,2> > &main_event_vector, envelope_type envelopePeak, double tx);
 
-
-std::map<std::string, double> snare_kick_dynamics(arma::vec &inSignal, double &_fs)
+template<typename T>
+std::map<std::string, double> snare_kick_dynamics(T* data, int size, double _fs)
 {
+    arma::vec inSignal(data, size, false, true);
     std::map<std::string, double> m;
     double gate_threshold{-1}, Th_gate{-1}, Tr_gate{-1}, threshold{-1}, ratio{-1}, Ta_compressor{-1}, Tr_compressor{-1}, MakeUPgain{-1};
     
@@ -301,9 +301,10 @@ constexpr double maxAfterComp_offset_voice = 10;
  **/
 void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, envelope_type &envelopeRms, envelope_type &envelopeRms_slow, arma::vec &Trelease_vector, arma::vec &Tattack_vector, double start);
 
-
-std::map<std::string, double> voice_dynamics(arma::vec &inSignal, double &_fs)
+template<typename T>
+std::map<std::string, double> voice_dynamics(T* data, int size, double _fs)
 {
+    arma::vec inSignal(data, size, false, true);
     std::map<std::string, double> m;
     double threshold{-1}, ratio{-1}, MakeUPgain{-1}, Ta{-1}, Tr{-1};
     
@@ -471,3 +472,9 @@ void _transientEvaluation (std::vector< std::array<int,2> > &transient_vector, e
         }
     }
 }
+
+
+// Template explicit initialization
+template std::map<std::string, double> snare_kick_dynamics<double>(double* data, int size, double _fs);
+template std::map<std::string, double> voice_dynamics<double>(double* data, int size, double _fs);
+

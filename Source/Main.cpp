@@ -27,6 +27,13 @@
  **/
 void open(std::vector<double> &_inSignal, File &file, double &_fs, double &_inSignalLen);
 
+
+
+
+
+
+
+
 int main (int argc, char* argv[])
 {
 
@@ -37,35 +44,36 @@ int main (int argc, char* argv[])
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/MoosSnareTop1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/CommitmentSnareTop1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/KillerQueen1.wav");
-//    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/FunnyValentines1.wav");
+    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/FunnyValentines1.wav");
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/DunningKruger1_10s.wav");
     
 //    std::string track = "lawsuits1.wav";
 //    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Voice/segments/" + track);
 //
-    std::string track = "allflat.wav";
-    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/" + track);
+//    std::string track = "allflat.wav";
+//    File file("/Users/Livio.Saracino/Developer/Compressor research/tracks/Snare/segments/" + track);
     
     std::vector<double> _inSignal;
     double _fs;
     double _inSignalLen;
     // the incoming signal is stored in a col arma vec
-    arma::vec inSignal;
     
     open(_inSignal, file, _fs, _inSignalLen);
 
     //copy _inSignal to inSignal with iterators
-    inSignal.zeros(_inSignalLen);
-    arma::vec::iterator ptrarma;
-    std::vector<double>::iterator ptr;
-    for(ptrarma = inSignal.begin(), ptr = _inSignal.begin(); ptrarma < inSignal.end() && ptr <_inSignal.end(); ptrarma++, ptr++)
-        *ptrarma = *ptr;
+//    inSignal.zeros(_inSignalLen);
+//    arma::vec::iterator ptrarma;
+//    std::vector<double>::iterator ptr;
+//    for(ptrarma = inSignal.begin(), ptr = _inSignal.begin(); ptrarma < inSignal.end() && ptr <_inSignal.end(); ptrarma++, ptr++)
+//        *ptrarma = *ptr;
+    int size = _inSignalLen;
+    double *data = _inSignal.data();
     
     
     //=================================================
     // SNARE / KICK GATE AND COMPRESSOR SMART PRESET
     //=================================================
-//    std::map<std::string, double> m = snare_kick_dynamics(inSignal, _fs);
+//    std::map<std::string, double> m = snare_kick_dynamics<double>(data, size, _fs);
 //    //print map
 //    for (auto it = m.cbegin(); it != m.cend(); ++it) {
 //        std::cout << "{" << (*it).first << ": " << (*it).second << "}\n";
@@ -74,7 +82,7 @@ int main (int argc, char* argv[])
     //=================================================
     // VOICE COMPRESSOR SMART PRESET
     //=================================================
-    std::map<std::string, double> m = voice_dynamics(inSignal, _fs);
+    std::map<std::string, double> m = voice_dynamics(data, size, _fs);
     //print map
     for (auto it = m.cbegin(); it != m.cend(); ++it) {
         std::cout << "{" << (*it).first << ": " << (*it).second << "}\n";
